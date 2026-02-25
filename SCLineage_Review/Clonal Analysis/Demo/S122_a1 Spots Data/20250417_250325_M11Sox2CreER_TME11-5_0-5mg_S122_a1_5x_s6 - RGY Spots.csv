@@ -1,8 +1,0 @@
-ID,Position X,Position Y,Position Z,Colour,D/V,G/W,Hemisphere,Neuron,MN,Commissural neuron,Midline cell,Glial cell,Uncertain,Damage,Notes
-0,915.949,1108.76,3127.76,g,v,g,l,yes,,v,,,,,commissural
-1,829.924,995.461,3132.33,g,v,g,l,yes,,,,,,,
-2,954.954,1077.87,3109.48,g,v,g,l,yes,,,,,,yes,
-3,976.152,1021.03,3104.91,g,v,g,l,yes,,,,,,yes,
-4,602.509,980.839,3082.07,g,d,g,l,yes,,,,,,,
-5,660.587,834.669,3054.65,g,d,g,l,yes,,,,,,,
-6,1684.07,1221.86,514.059,y,d,g,r,,,,,,,,
