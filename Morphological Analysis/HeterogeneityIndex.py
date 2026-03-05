@@ -1,9 +1,11 @@
 # ==========================================================
 # CLONE HETEROGENEITY INDEX — CLEAN, TALL FIGURE (+ CSV OUTPUT)
 # ==========================================================
-# - Reads: Morphotype_Integrated_Full_FINAL_with_sholl.xlsx
-# - Uses only rows with has_swc == TRUE (reconstructed neurons)
-# - Morphotypes = unique values in "CellType_With_Complexity" per CloneKey
+# UPDATED to work with:
+#   Z:\People\Francisco\Code_testing_folder\Output\cell_analysis_detailed_with_complexity.csv
+#
+# - Uses the per-cell SWC-derived table (already reconstructed), so no has_swc filter needed.
+# - Morphotypes = unique values in "Morphotype" (or "CellType_With_Complexity") per CloneKey
 # - Heterogeneity index per clone:
 #       M = # of distinct morphotypes in the clone
 #       N = # of reconstructed neurons in the clone
@@ -16,8 +18,8 @@
 #        (A) Bar: clone vs heterogeneity index (with n on top)
 #        (B) Histogram of indices (mean & median)
 #        (C) Scatter: clone size vs heterogeneity index
-#   3) Saved as SVG and JPEG in the same folder as the Excel.
-#   4) NEW: CSV with ALL reconstructed rows + per-clone columns:
+#   3) Saved as SVG and JPEG in OUT_DIR.
+#   4) NEW: CSV with ALL rows + per-clone columns:
 #        - N_morphotypes_in_clone
 #        - HeterogeneityIndex_in_clone
 #        - N_reconstructed_in_clone
@@ -28,37 +30,38 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-########################################################################################################################################################################################################
-# User input
-EXCEL_PATH = r"C:\Users\fdasilve\Morphological Analysis\Morphotype_Integrated_Full_FINAL_with_sholl.xlsx" # Path of Cell_morphotypes xlsx file
+# ---------- USER CONFIG ----------
+CSV_PATH = r"Z:\People\Francisco\Code_testing_folder\Output\cell_analysis_detailed_with_complexity.csv"
 
 CLONE_COL = "CloneKey"
-MORPHO_COL = "CellType_With_Complexity"   # or "CellType"
-HAS_SWC_COL = "has_swc"
+# Use Morphotype from your classifier output (preferred).
+# If you want the legacy name instead, set MORPHO_COL = "CellType_With_Complexity"
+MORPHO_COL = "Morphotype"
 
-OUT_DIR = "C:/Users/fdasilve\Morphological Analysis\Clone_Richness_Permutation"
+OUT_DIR = r"Z:\People\Francisco\Code_testing_folder\Output\Clone_HI"
 OUT_BASENAME = "clone_heterogeneity_index_"
 
 DPI = 300  # high resolution
+os.makedirs(OUT_DIR, exist_ok=True)
 
-# Load Data
-print("[INFO] Loading Excel:", EXCEL_PATH)
-df = pd.read_excel(EXCEL_PATH)
+# ---------- LOAD DATA ----------
+print("[INFO] Loading CSV:", CSV_PATH)
+df = pd.read_csv(CSV_PATH)
 
-expected_cols = {CLONE_COL, MORPHO_COL, HAS_SWC_COL}
+expected_cols = {CLONE_COL, MORPHO_COL}
 missing = expected_cols - set(df.columns)
 if missing:
-    raise ValueError(f"Missing expected columns in Excel: {missing}")
-
-# ---------- FILTER TO RECONSTRUCTED NEURONS ----------
-has_swc_mask = df[HAS_SWC_COL].astype(str).str.upper().isin(["TRUE", "1", "YES"])
-df_recon = df[has_swc_mask].copy()
+    raise ValueError(f"Missing expected columns in CSV: {missing}\nAvailable columns: {df.columns.tolist()}")
 
 print(f"[INFO] Total rows in table       : {len(df)}")
-print(f"[INFO] Reconstructed (has_swc)   : {len(df_recon)}")
+
+# Create has_swc column for compatibility (all rows are SWC-derived = reconstructed)
+df["has_swc"] = True
 
 # keep only rows that can be assigned to a clone + morphotype
-df_recon = df_recon.dropna(subset=[CLONE_COL, MORPHO_COL]).copy()
+df_recon = df.dropna(subset=[CLONE_COL, MORPHO_COL]).copy()
+
+print(f"[INFO] Rows used after dropna    : {len(df_recon)}")
 
 # ---------- COMPUTE HETEROGENEITY PER CLONE ----------
 records = []
@@ -80,7 +83,7 @@ for clone_key, sub in df_recon.groupby(CLONE_COL):
 
 df_hi = pd.DataFrame(records)
 if df_hi.empty:
-    raise RuntimeError("No reconstructed cells found after filtering; cannot plot.")
+    raise RuntimeError("No cells found after filtering; cannot plot.")
 
 # Sort by heterogeneity index (descending)
 df_hi = df_hi.sort_values(by="HeterogeneityIndex", ascending=False).reset_index(drop=True)
@@ -93,9 +96,8 @@ df_hi.to_csv(
     index=False
 )
 
-
 # ---------- NEW: MERGE BACK TO ROW-LEVEL TABLE & SAVE CSV ----------
-# This produces a CSV with ALL ORIGINAL COLUMNS (for reconstructed rows)
+# This produces a CSV with ALL ORIGINAL COLUMNS (for all rows)
 # plus the per-clone summary columns repeated on each row of that clone.
 df_recon_with_hi = df_recon.merge(
     df_hi[[CLONE_COL, "N_reconstructed", "N_morphotypes", "HeterogeneityIndex"]],
@@ -110,9 +112,9 @@ df_recon_with_hi = df_recon_with_hi.rename(columns={
     "HeterogeneityIndex": "HeterogeneityIndex_in_clone"
 })
 
-csv_path = os.path.join(OUT_DIR, OUT_BASENAME + "reconstructed_rows_with_HI.csv")
+csv_path = os.path.join(OUT_DIR, OUT_BASENAME + "rows_with_HI.csv")
 df_recon_with_hi.to_csv(csv_path, index=False)
-print("\n[INFO] Saved reconstructed rows + per-clone HI CSV:")
+print("\n[INFO] Saved rows + per-clone HI CSV:")
 print("  CSV :", csv_path)
 
 # ---------- PLOTTING STYLE HELPERS ----------
