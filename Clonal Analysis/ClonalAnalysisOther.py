@@ -10,7 +10,7 @@ import matplotlib.ticker as ticker
 import seaborn as sns
 from matplotlib.ticker import MultipleLocator
 import matplotlib.patches as mpatches  # For creating custom legend entries
-from ClonalAnalysisFunctions_20260126 import *
+from ClonalAnalysisFunctions import *
 import ColPals
 import random
 from statistics import mean
@@ -62,3 +62,4 @@ def plotExpression(df, rg_clones_df, gene):
                           'The proportion of mixed-expression clones that are unicolour clones is': both_uni}
     mixed_express_info = pd.DataFrame(list(mixed_express_info.items()), columns = ['Measure', 'Fraction'])
     return proportions, x_axis_ticks, rg_clones_df, mixed_express_info
+

@@ -80,7 +80,7 @@ The demo inputs live in:
 Open `SCNormalization_BLT.py` and edit the `### User input` section paths:
 ```python
 input_cells_file_path = r'Overall_rg_cells.csv'
-input_ref_folder_path = r'Ref Files'
+input_ref_folder_path = r'Ref Files' #From Clonal Analysis demo folder. 
 output_folder_name = '' # Desired output folder name
 overall_output_file_path = r'Output/' # Desired output path
 ```
@@ -118,6 +118,7 @@ Open `CloneDistributionHeatmap.py` and edit the `### User input` section paths:
 INPUT_PATH = r"Demo/Output_CompareDistributions_<timestamp>/query_cells_percentile_membership_<timestamp>.csv"
 OUTPUT_DIR = r"Demo/Output_CloneDistributionHeatmap"
 ```
+Obs: Remember to update # File path of ClonalAnalysisPlots
 
 **Expected outputs**
 In `OUTPUT_DIR/Plotting_<timestamp>/` (and/or `OUTPUT_DIR` depending on settings), files include:

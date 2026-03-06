@@ -1,15 +1,53 @@
-# ==========================================================
-#   SHOLL (paper-like) — per-cell & per-clone curves, Updated 26112025
-#   totals (0–r), MAX intersections, bar plots,
-#   and CSV report with full Sholl curves.
-#
-#   Folder hierarchy:
-#     .../<Litter S###>/<Animal S###_a#>/<Section s1..s6>/<Clone clone*>/<cell>.swc
-#   Example:
-#     C:\...\our_swc_files_corrected\S127\S127_a20\S1\clone 1\3.swc
-#   CloneKey = Litter-Animal-Section-Clone
-#            = S127-S127_a20-S1-clone 1
-# ==========================================================
+"""
+================================================================================
+SHOLL ANALYSIS — adapted from
+Deska-Gauthier, et al.(2024).(PER-CELL + PER-CLONE)
+FULL CURVES + SUMMARY METRICS • EXPORTABLE FIGURES + CSV REPORT
+Updated: 26.11.2025  |  Output folder: Sholl_analysis_per_cell (03032026)
+================================================================================
+Purpose:
+Quantify neurite branching complexity using Sholl intersections as a function of
+distance from the soma, and summarize results at both cell and clone levels.
+
+Folder hierarchy (required):
+  .../<Litter S###>/<Animal S###_a#>/<Section S1..S6>/<Clone clone*>/<cell>.swc
+Example:
+  C:\...\our_swc_files_corrected\S127\S127_a20\S1\clone 1\3.swc
+
+Clone identity:
+  CloneKey = Litter-Animal-Section-Clone
+          = S127-S127_a20-S1-clone 1
+
+What this pipeline computes (from SWC only):
+- Full Sholl curve per cell: intersections vs radius (0 → R_MAX, step = STEP µm)
+- Per-radius intercepts: Ixx  (intersection count at radius xx µm)
+- Cumulative totals:      Txx  (sum of intersections from 0 → xx µm)
+- Peak complexity:
+    • MAX      = maximum intersections across radii
+    • R_AT_MAX = radius where MAX occurs
+- Primary projections count (n_primary): neurites emerging from soma
+
+Figures saved (SVG) to OUT_DIR:
+A) Sholl intersections per radius — all cells (colored by CloneKey)
+A2) Per-cell Sholl curves — one figure per top clone (largest n)
+B) Sholl intersections per radius — per CloneKey (mean ± SEM)
+C) Totals (0–r) per CloneKey — bar plots for each radius in RADII
+C2) Max intersections per CloneKey — bar plot
+D) Totals (0–r) per cell — one figure per radius (bars colored by CloneKey)
+D2) Max intersections per cell — bar plot
+F) Radius at MAX per cell — bar plot
+
+CSV output:
+- sholl_per_cell_report_with_curves.csv
+  Includes per-cell summary metrics + full Sholl curve columns (Sholl_0, Sholl_2, ...)
+
+Key parameters (edit in CONFIG section):
+- STEP  : Sholl shell step (µm)
+- R_MAX : maximum radius (µm)
+- RADII : list of radii for Ixx / Txx summaries
+- N_TOP_CLONES_EXAMPLES : number of largest clones used for per-cell example plots
+================================================================================
+"""
 
 import os, re, glob, math
 import numpy as np
@@ -25,7 +63,7 @@ DPI = 110
 # ----------------------------
 # CONFIG — edit these
 # ----------------------------
-SWC_ROOT = r"C:\Users\fdasilve\PycharmProjects\PythonProject\morphological_analysis_sc\our_swc_files_corrected"
+SWC_ROOT = r"Z:\People\Francisco\Code_testing_folder\Input\Our_data_final_version (25112025)\our_swc_files_corrected"
 SWC_GLOB = "**/*.swc"
 
 STEP  = 2.0   # Sholl shell step (µm)
@@ -38,7 +76,7 @@ RADII = [20, 30, 40, 60, 90, 100, 120, 150]
 N_TOP_CLONES_EXAMPLES = 3
 
 # Output directory for SVG plots + CSV
-OUT_DIR = r"C:\Users\fdasilve\Morphological Analysis\Sholl_analysis_per_cell (26112025)"
+OUT_DIR = r"Z:\People\Francisco\Code_testing_folder\output\Sholl_analysis_per_cell (03032026)"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ------------------ SWC parsing ------------------
