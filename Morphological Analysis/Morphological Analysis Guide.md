@@ -85,7 +85,7 @@ GitHub UI: **Code → Download ZIP**, then unzip
 1) Open `MorphotypeClassifier.py` and update the `# User input` paths to:
 
 ```python
-CSV_PATH = r"Demo/Cell_Info.csv"
+CSV_PATH = r"Demo/Cell_Info.csv" or None #the code was updated to work with swc files only using the file name as reference. 
 SWC_ROOT = r"Demo"
 OUT_DIR  = r"Demo/Output_MorphotypeClassifier"
 ```
@@ -98,12 +98,17 @@ python MorphotypeClassifier.py
 
 **Expected output**
 In `Demo/Output_MorphotypeClassifier/`:
-- `cell_analysis_detailed_with_complexity_T100_from_SWC.csv`
-- `cell_type_distribution_with_complexity_T100_from_SWC.svg`
-- `PER_CLASS_OVERVIEWS/`
+- cell_analysis_detailed_with_complexity.csv
+- 1_method_schematic_with_complexity.svg
+- 2_comprehensive_overview_with_complexity.svg
+- 3_cell_type_distribution_with_complexity.svg
+- 4_clone_composition_with_complexity.svg
+- 5_empirical_distributions.svg
+- 6_complexity_analysis.svg
+- PER_CLASS_OVERVIEWS/
 
 **Expected runtime**
-Typically **< 5 minutes** for the included demo SWCs.
+Typically **< 5 minutes** for the included demo SWCs. ( for bigger datasets above 200 cells it can take up to 5 minutes to run) 
 
 ---
 
@@ -134,10 +139,10 @@ Typically **minutes** for the demo.
 
 1) Open `HeterogeneityIndex.py` and update:
 ```python
-EXCEL_PATH = r"Demo/Clone_morphotypes.xlsx"
+CSV_PATH   = r"Demo/Output_MorphotypeClassifier/cell_analysis_detailed_with_complexity.csv" #the output from step 3.2
+CLONE_COL  = "CloneKey"
+MORPHO_COL = "Morphotype"
 OUT_DIR    = r"Demo/Output_HeterogeneityIndex"
-# Demo file uses 'CellType' (not 'CellType_With_Complexity'):
-MORPHO_COL  = "CellType"
 ```
 
 2) Run:
@@ -148,8 +153,10 @@ python HeterogeneityIndex.py
 
 **Expected output**
 In `Demo/Output_HeterogeneityIndex/`:
-- `clone_heterogeneity_index_*.svg` and `.jpg`
-- `clone_heterogeneity_index_reconstructed_rows_with_HI.csv`
+- clone_heterogeneity_index_per_clone_summary.csv
+- clone_heterogeneity_index_rows_with_HI.csv
+- clone_heterogeneity_index_.svg
+- clone_heterogeneity_index_.jpg`
 
 **Expected runtime**
 Typically **< 1 minute** for the demo.
