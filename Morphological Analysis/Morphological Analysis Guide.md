@@ -169,10 +169,10 @@ Typically **< 1 minute** for the demo.
 
 1) Open `bootstrap comparison.py` and update:
 ```python
-REAL_EXCEL_PATH = r"Demo/Clone_morphotypes.xlsx"
-HOMO_EXCEL_PATH = r"Demo/Data Tables/Homogeneous Simulated Dataset.xlsx"
-HET_EXCEL_PATH  = r"Demo/Data Tables/Heterogeneous Simulated Dataset.xlsx"
-OUTPUT_DIR      = r"Demo/Output_Bootstrap"
+REAL_PATH  = r"Demo/Output_MorphotypeClassifier/cell_analysis_detailed_with_complexity.csv" #the output from step 3.2
+HOMO_PATH  = r"Demo/Data Tables/Homogeneous Simulated Dataset.xlsx"
+HET_PATH   = r"Demo/Data Tables/Heterogeneous Simulated Dataset.xlsx"
+OUTPUT_DIR = r"Demo/Output_Bootstrap"
 ```
 
 2) Run:
@@ -180,6 +180,23 @@ OUTPUT_DIR      = r"Demo/Output_Bootstrap"
 cd "Morphological Analysis"
 python "bootstrap comparison.py"
 ```
+Expected output
+In Demo/Output_Bootstrap/:
+
+- clone_richness_permutation_results_real_Morphotype.csv
+- clone_richness_permutation_results_homo_*.csv
+- clone_richness_permutation_results_het_*.csv
+- clone_richness_H_summary_real_Morphotype.csv
+- clone_richness_permutation_report_real_Morphotype.txt
+- Figure1_clone_richness_real_and_all_Morphotype.svg
+- Figure2_clone_richness_simulated_Morphotype.svg
+- Figure3_random_vs_clonal_richness_Morphotype.svg
+- Figure4_random_vs_clonal_colored_Morphotype.svg
+- Figure5_random_vs_clonal_heterogeneity_Morphotype.svg
+- Figure6_clone_heterogeneity_real_and_all_Morphotype.svg
+
+Expected runtime
+Typically a few minutes for the demo, depending on the number of permutations.
 
 ---
 
