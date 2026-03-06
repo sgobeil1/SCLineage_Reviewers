@@ -118,6 +118,7 @@ Open `CloneDistributionHeatmap.py` and edit the `### User input` section paths:
 INPUT_PATH = r"Demo/Output_CompareDistributions_<timestamp>/query_cells_percentile_membership_<timestamp>.csv"
 OUTPUT_DIR = r"Demo/Output_CloneDistributionHeatmap"
 ```
+Obs: Remember to update # File path of ClonalAnalysisPlots
 
 **Expected outputs**
 In `OUTPUT_DIR/Plotting_<timestamp>/` (and/or `OUTPUT_DIR` depending on settings), files include:
