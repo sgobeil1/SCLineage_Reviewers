@@ -76,7 +76,7 @@ import seaborn as sns
 
 # ==================== CONFIGURATION ====================
 CSV_PATH = None #r"Z:\People\Francisco\Code_testing_folder\Input\imaris_cellinfo_with_total_length_with_map__len_gt400.csv" #csv file directory or None (to run swc only - the metadata is computed based on the hierarchy of folder)
-SWC_ROOT = r"Z:\People\Francisco\Code_testing_folder\Input\Neuromorpho Inh_Exc"
+SWC_ROOT = r"C:\Users\fdasilve\PycharmProjects\SCLineage_Reviewers\Morphological Analysis\Demo"
 OUT_DIR = r"Z:\People\Francisco\Code_testing_folder\Output"
 PER_CLASS_DIR = os.path.join(OUT_DIR, "PER_CLASS_OVERVIEWS")
 
