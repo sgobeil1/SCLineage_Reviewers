@@ -1,0 +1,129 @@
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+def load_reference_SC(
+    outline_path,
+    ventricle_path,
+    vz_path,
+    width=650,
+    dorsal_height=450,
+    ventral_height=-450,
+    side=1,
+):
+    """
+    Load and normalize the outer outline, ventricle, and VZ paths.
+
+    The first four rows of Outline are:
+        0 = CC
+        1 = L
+        2 = B
+        3 = T
+
+    Rows 4 onward are the sequential outer-outline path.
+    """
+
+    outline = pd.read_csv(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\Outline_normalized.csv')
+    ventricle = pd.read_csv(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\Ventricle_normalized.csv')
+    vz = pd.read_csv(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\VZ_normalized.csv')
+
+    required_columns = {"Position X", "Position Y"}
+
+    for name, frame in {
+        "Outline": outline,
+        "Ventricle": ventricle,
+        "VZ": vz,
+    }.items():
+        missing = required_columns - set(frame.columns)
+
+        if missing:
+            raise ValueError(
+                f"{name} is missing columns: "
+                + ", ".join(sorted(missing))
+            )
+
+    if len(outline) < 5:
+        raise ValueError(
+            "Outline must contain four landmark rows "
+            "followed by path coordinates."
+        )
+
+    cc = outline.iloc[0]
+    lateral = outline.iloc[1]
+    bottom = outline.iloc[2]
+    top = outline.iloc[3]
+
+    cc_x = float(cc["Position X"])
+    cc_y = float(cc["Position Y"])
+
+    lateral_x = float(lateral["Position X"])
+    top_y = float(top["Position Y"])
+    bottom_y = float(bottom["Position Y"])
+
+    x_distance = abs(lateral_x - cc_x)
+    dorsal_distance = abs(top_y - cc_y)
+    ventral_distance = abs(bottom_y - cc_y)
+
+    if np.isclose(x_distance, 0):
+        raise ValueError("CC and L have the same X coordinate.")
+
+    if np.isclose(dorsal_distance, 0):
+        raise ValueError("CC and T have the same Y coordinate.")
+
+    if np.isclose(ventral_distance, 0):
+        raise ValueError("CC and B have the same Y coordinate.")
+
+    x_scale = width / x_distance
+    dorsal_scale = dorsal_height / dorsal_distance
+    ventral_scale = abs(ventral_height) / ventral_distance
+
+    def normalize(frame):
+        result = frame.copy()
+
+        raw_x = pd.to_numeric(
+            result["Position X"],
+            errors="raise",
+        )
+
+        raw_y = pd.to_numeric(
+            result["Position Y"],
+            errors="raise",
+        )
+
+        dx = raw_x - cc_x
+        dy = raw_y - cc_y
+
+        # One hemicord: convert distance from CC to positive X.
+        result["x"] = np.abs(dx) * x_scale * side
+
+        # Illustrator Y increases downward, so flip the sign.
+        result["y"] = np.where(
+            dy < 0,
+            (-dy) * dorsal_scale,
+            -(dy) * ventral_scale,
+        )
+
+        return result
+
+    landmarks = normalize(outline.iloc[:4].copy())
+
+    # Only rows 4 onward are connected as the outer path.
+    outer_path = normalize(outline.iloc[4:].copy())
+    ventricle_path = normalize(ventricle)
+    vz_path = normalize(vz)
+
+    landmarks["Landmark"] = ["CC", "L", "B", "T"]
+
+    return {
+        "outline": outer_path[["x", "y"]].reset_index(drop=True),
+        "ventricle": ventricle_path[["x", "y"]].reset_index(drop=True),
+        "vz": vz_path[["x", "y"]].reset_index(drop=True),
+        "landmarks": landmarks[
+            ["Landmark", "x", "y"]
+        ].reset_index(drop=True),
+        "width": float(width),
+        "dorsal_height": float(dorsal_height),
+        "ventral_height": float(ventral_height),
+    }
