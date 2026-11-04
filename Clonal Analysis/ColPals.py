@@ -9,12 +9,11 @@ olive = '#A89F8EFF'
 arches = (pink, lightblue, orange, olive, darkblue, maroon)
 
 
-# MADM
+#MADM
 madmred = 'firebrick'
 madmgreen = 'forestgreen'
 madmyellow = 'gold'
 
-# tab20
 red = '#9E0142'
 pink = '#db7786'
 dark_orange = '#D53E4F'
@@ -31,7 +30,10 @@ lightgrey = '#bcbec0'
 darkgrey = '#9b9b9b'
 TMpal = (dark_orange, med_orange, light_orange)
 spectral = (dark_orange, med_orange, light_orange, yellow, light_green, green, teal, blue, purple)
-stckpal_4col = (darkblue, blue, teal, yellow)
-stckpal_2col = ('darkgrey', 'w')
-stckpal_dv = (light_green, 'w', pink)
-stckpal_lat = (purple, 'w')
+stckpal_4col = (yellow, teal, blue, darkblue)
+stckpal_2col = ('k', 'w')
+stckpal_dv = (light_green, lightgrey, pink)
+stckpal_lat = (lightgrey, purple)
+
+# Grey palette
+greys = ('#E0E0E0', '#B3B3B3', '#808080', '#4D4D4D')
