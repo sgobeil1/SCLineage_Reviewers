@@ -10,7 +10,8 @@ import matplotlib.ticker as ticker
 import seaborn as sns
 from matplotlib.ticker import MultipleLocator
 import matplotlib.patches as mpatches  # For creating custom legend entries
-from ClonalAnalysisFunctions import *
+import matplotlib as mpl
+from ClonalAnalysisFunctions_20260126 import *
 import ColPals
 import random
 from statistics import mean
@@ -308,11 +309,72 @@ def snsStackedBarPlot(
     se_col='SE',                
     err_color='black',
     capsize=3,
-    bar_width=0.8
+    bar_width=0.8,
+    rotation = 0,
+    tm_colourbar = False, # Do you want a TM colour bar strip under the bars?
+    tm_values = None, 
+    tm_order = None,
+    tm_palette = None,
+    tm_label = 'TM',
+    rc_colourbar = False, # Do you want a RC level colour bar strip under the bars?
+    rc_values = None,
+    rc_order = None,
+    rc_palette = None,
+    rc_label = "RC level",
+    outline_categories=None,     
+    outline_colours=None,       
+    outline_linewidth=1.5,
 ):
-    fig = plt.figure(figsize=fig_size)
-    ax = fig.add_subplot()
+    
+    # Use GridSpec when a TM strip is requested.
+    if tm_colourbar and rc_colourbar:
+        fig = plt.figure(figsize=fig_size)
 
+        grid = fig.add_gridspec(
+            nrows=3,
+            ncols=1,
+            height_ratios=[20, 1, 1],
+            hspace=0.05,
+        )
+
+        ax = fig.add_subplot(grid[0])
+        tm_ax = fig.add_subplot(grid[1], sharex=ax)
+        rc_ax = fig.add_subplot(grid[2], sharex=ax)
+
+    elif tm_colourbar:
+        fig = plt.figure(figsize=fig_size)
+
+        grid = fig.add_gridspec(
+            nrows=2,
+            ncols=1,
+            height_ratios=[20, 1],
+            hspace=0.05,
+        )
+
+        ax = fig.add_subplot(grid[0])
+        tm_ax = fig.add_subplot(grid[1], sharex=ax)
+        rc_ax = None
+
+    elif rc_colourbar:
+        fig = plt.figure(figsize=fig_size)
+
+        grid = fig.add_gridspec(
+            nrows=2,
+            ncols=1,
+            height_ratios=[20, 1],
+            hspace=0.05,
+        )
+
+        ax = fig.add_subplot(grid[0])
+        tm_ax = None
+        rc_ax = fig.add_subplot(grid[1], sharex=ax)
+
+    else:
+        fig = plt.figure(figsize=fig_size)
+        ax = fig.add_subplot()
+        tm_ax = None
+        rc_ax = None
+        
     # Order x categories
     if x_axis_ticks is not None:
         x_order = list(x_axis_ticks)
@@ -347,15 +409,47 @@ def snsStackedBarPlot(
     handles = []
     labels = []
 
+    # Defaults for optional outline-only categories
+    if outline_categories is None:
+        outline_categories = []
+
+    if outline_colours is None:
+        outline_colours = {}
+
     # Draw stacked bars + one-sided lower error bars at top of each segment
     for lvl in hue_levels:
         heights = h[lvl].to_numpy(dtype=float)
 
-        bars = ax.bar(
-            x_pos, heights, bottom=bottoms,
-            width=bar_width, color=color_map.get(lvl, None),
-            edgecolor='k',
+        # Special categories can be drawn as an outline with no fill
+        if lvl in outline_categories:
+
+            facecolour = 'none'
+
+            edgecolour = outline_colours.get(
+                lvl,
+                color_map.get(lvl, 'black')
+            )
+
+            linewidth = outline_linewidth
+            alpha = 1.0
+
+        else:
+
+            facecolour = color_map.get(lvl, None)
+            edgecolour = 'black'
+            linewidth = 1.0
             alpha = 0.75
+
+
+        bars = ax.bar(
+            x_pos,
+            heights,
+            bottom=bottoms,
+            width=bar_width,
+            facecolor=facecolour,
+            edgecolor=edgecolour,
+            linewidth=linewidth,
+            alpha=alpha,
         )
         handles.append(bars[0])
         labels.append(lvl)
@@ -380,10 +474,15 @@ def snsStackedBarPlot(
 
     # Formatting
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(x_order if x_axis_ticks is None else x_axis_ticks,
-                       fontsize=16, weight='bold')
+    # Hide the main x labels when the TM strip is present.
+    if tm_ax is None:
+        ax.set_xticklabels(x_order, fontsize=16, rotation=rotation, weight="bold")
+        ax.set_xlabel( x_axis_title, fontsize=18, weight="bold")
+    else:
+        ax.tick_params(axis="x", labelbottom=False)
+    
+ 
     ax.tick_params(axis='y', labelsize=16)
-    ax.set_xlabel(x_axis_title, fontsize=18, weight='bold')
     ax.set_ylabel(y_axis_title, fontsize=18, weight='bold')
 
     ax.spines['top'].set_visible(False)
@@ -398,6 +497,208 @@ def snsStackedBarPlot(
               title=hue)
     plt.setp(ax.get_legend().get_texts(), fontsize='16')
     plt.setp(ax.get_legend().get_title(), fontsize='16')
+
+    # Optional TM annotation strip.
+    if tm_colourbar is True:
+        # Draw one rectangle beneath each clone.
+        for index, tm_value in enumerate(tm_values):
+            colour = tm_palette[tm_value]
+            tm_ax.bar(
+                index,
+                1,
+                width=bar_width,
+                color=colour,
+                edgecolor="black",
+                linewidth=0.5,
+            )
+        tm_ax.set_xlim(
+            -0.5,
+            len(x_order) - 0.5,
+        )
+        tm_ax.set_ylim(0, 1)
+
+        if rc_ax is None:
+            tm_ax.set_xticks(x_pos)
+            tm_ax.set_xticklabels(
+                x_order,
+                fontsize=16,
+                rotation=rotation,
+                weight="bold",
+            )
+
+            tm_ax.set_xlabel(
+                x_axis_title,
+                fontsize=18,
+                weight="bold",
+            )
+            
+            tm_ax.set_xlabel(
+                x_axis_title,
+                fontsize=18,
+                weight="bold",
+            )
+        else:
+            tm_ax.set_xticks(x_pos)
+            tm_ax.tick_params(
+                axis="x",
+                bottom=False,
+                labelbottom=False,
+            )
+
+        tm_ax.set_yticks([])
+        
+        tm_ax.set_ylabel(
+            tm_label,
+            fontsize=12,
+            weight="bold",
+            rotation=0,
+            labelpad=18,
+            va="center",
+        )
+
+        for spine in tm_ax.spines.values():
+            spine.set_visible(False)
+
+        tm_ax.tick_params(
+            axis="x",
+            width=1.5,
+        )
+
+        tm_legend_handles = [
+            mpl.patches.Patch(
+                facecolor=tm_palette[value],
+                edgecolor="black",
+                linewidth=0.5,
+                label=str(value),
+            )
+            for value in tm_order
+            if value in set(tm_values)
+        ]
+
+        if any(pd.isna(value) for value in tm_values):
+            tm_legend_handles.append(
+                mpl.patches.Patch(
+                    facecolor=missing_tm_colour,
+                    edgecolor="black",
+                    linewidth=0.5,
+                    label="Missing TM",
+                )
+            )
+
+        tm_legend = tm_ax.legend(
+            handles=tm_legend_handles,
+            title=tm_label,
+            loc="upper left",
+            bbox_to_anchor=(1, 1.5),
+            frameon=False,
+        )
+        
+        
+        # Optional RC level colour strip
+        if rc_colourbar is True:
+            if rc_values is None or rc_order is None or rc_palette is None:
+                raise ValueError(
+                    "rc_values, rc_order, and rc_palette must be provided "
+                    "when rc_colourbar=True."
+                )
+
+            if len(rc_values) != len(x_order):
+                raise ValueError(
+                    "rc_values must contain one value for every plotted x category."
+                )
+
+            missing_rc_entries = {
+                value
+                for value in rc_values
+                if pd.notna(value) and value not in rc_palette
+            }
+
+            if missing_rc_entries:
+                raise ValueError(
+                    "RC Level values missing from rc_palette: "
+                    + ", ".join(sorted(map(str, missing_rc_entries)))
+                )
+
+            for clone_index, rc_value in enumerate(rc_values):
+                if pd.isna(rc_value) or str(rc_value).strip() in {"", "-"}:
+                    continue
+
+                colour = rc_palette[rc_value]
+
+                rc_ax.bar(
+                    clone_index,
+                    1,
+                    width=bar_width,
+                    color=colour,
+                    edgecolor="black",
+                    linewidth=0.5,
+                )
+
+            rc_ax.set_xlim(
+                -0.5,
+                len(x_order) - 0.5,
+            )
+
+            rc_ax.set_ylim(0, 1)
+            rc_ax.set_yticks([])
+
+            rc_ax.set_ylabel(
+                rc_label,
+                fontsize=12,
+                weight="bold",
+                rotation=0,
+                labelpad=24,
+                va="center",
+            )
+
+            for spine in rc_ax.spines.values():
+                spine.set_visible(False)
+
+            rc_ax.set_xticks(x_pos)
+            rc_ax.set_xticklabels(
+                x_order,
+                fontsize=16,
+                rotation=rotation,
+                weight="bold",
+            )
+
+            rc_ax.set_xlabel(
+                x_axis_title,
+                fontsize=18,
+                weight="bold",
+            )
+
+            rc_handles = [
+                mpl.patches.Patch(
+                    facecolor=rc_palette[value],
+                    edgecolor="black",
+                    linewidth=0.5,
+                    label=str(value),
+                )
+                for value in rc_order
+                if value in set(rc_values)
+            ]
+
+            if rc_handles:
+                rc_ax.legend(
+                    handles=rc_handles,
+                    title=rc_label,
+                    loc="upper left",
+                    bbox_to_anchor=(1.01, 1.5),
+                    frameon=False,
+                    fontsize=10,
+                    title_fontsize=11,
+                )
+        
+
+        plt.setp(
+            tm_legend.get_texts(),
+            fontsize=12,
+        )
+        plt.setp(
+            tm_legend.get_title(),
+            fontsize=12,
+        )
 
     fig.savefig(output_path + '.svg', format='svg', dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -440,35 +741,208 @@ def snsScatterPlot(data, x, y, x_axis_title, y_axis_title, output_path, palette,
     plt.close(fig)
     #plt.show()
     
-# Create a grouped barplot
-def snsGroupedBarPlot(data, x, y, hue, x_axis_title, y_axis_title, output_path, palette):
-    g = sns.catplot(data = data,
-                kind = 'bar', 
-                x = x, 
-                y = y, 
-                hue = hue, 
-                errorbar = 'se', 
-                capsize = 0.2,
-                err_kws = {'color': 'k', 'linewidth': 1},
-                palette = palette,
-                height = 5, 
-                aspect = 1)
-    
-    ax = g.ax # This gets the Axe object from the FacetGrid which the catplot has created
-    ax.set_xlabel(x_axis_title, fontsize = 18, weight = 'bold')
-    ax.set_ylabel(y_axis_title, fontsize = 18, weight = 'bold') 
-    ax.spines['top'].set_visible(False) # Remove top of frame around plot
-    ax.spines['right'].set_visible(False) # Remove right side of frame around plot
-    ax.spines['left'].set_linewidth(1.5)
-    ax.spines['bottom'].set_linewidth(1.5)
-    ax.tick_params(width = 1.5)
-    plt.yticks(weight = 'bold')
-    plt.xticks(weight = 'bold')
-                
-    plt.tight_layout()
-    fig = g.fig
-    fig.savefig(output_path + '.svg', format = 'svg', dpi=300, bbox_inches = 'tight')
-    #plt.show()
+# Create a grouped violin plot
+def snsGroupedViolinPlot(
+    x_column, y_column, hue_column, df,
+    x_axis_title, y_axis_title, x_axis_ticks,
+    output_path, palette,
+    order=None, hue_order=None, max_y=None, fig_size=(6.5, 5),
+    show_points=True,
+    violin_width=0.8,
+    inner="quart",
+    mean_line=True,
+    mean_line_kwargs=None,
+    sem_bars=True,
+    sem_kwargs=None,
+    legend_title=None
+):
+    """
+    Grouped violin plot with hue categories, optional raw points,
+    per-group mean lines, and SEM bars.
+
+    Example:
+        x = Level
+        hue = TM
+        y = Total cells
+    """
+
+    if order is None:
+        order = list(pd.unique(df[x_column]))
+
+    if hue_order is None:
+        hue_order = list(pd.unique(df[hue_column]))
+
+    n_hues = len(hue_order)
+
+    # Width of each individual hue violin inside one x-category
+    hue_width = violin_width / n_hues
+
+    # Offsets centered around each category position: 0, 1, 2, ...
+    offsets = np.linspace(
+        -violin_width / 2 + hue_width / 2,
+        violin_width / 2 - hue_width / 2,
+        n_hues
+    )
+
+    offset_lookup = dict(zip(hue_order, offsets))
+
+    summary = (
+        df.groupby([x_column, hue_column], observed=True)[y_column]
+          .agg(mean="mean", std="std", count="count")
+          .reset_index()
+    )
+    summary["sem"] = summary["std"] / np.sqrt(summary["count"])
+
+    fig = plt.figure(figsize=fig_size)
+    ax = fig.add_subplot()
+
+    # Grouped violin plot
+    sns.violinplot(
+        x=x_column,
+        y=y_column,
+        hue=hue_column,
+        data=df,
+        order=order,
+        hue_order=hue_order,
+        palette=palette,
+        inner=inner,
+        cut=0,
+        linewidth=1,
+        width=violin_width,
+        dodge=True,
+        fill=True,
+        alpha=0.8,
+        ax=ax
+    )
+
+    # Optional raw points
+    if show_points:
+        sns.stripplot(
+            x=x_column,
+            y=y_column,
+            hue=hue_column,
+            data=df,
+            order=order,
+            hue_order=hue_order,
+            dodge=True,
+            color="black",
+            alpha=0.35,
+            size=5,
+            jitter=True,
+            ax=ax,
+            zorder=3
+        )
+
+    # Remove duplicate legend entries caused by stripplot
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(
+        handles[:n_hues],
+        labels[:n_hues],
+        title=legend_title if legend_title is not None else hue_column,
+        frameon=False,
+        fontsize=12,
+        title_fontsize=13
+    )
+
+    # Mean lines
+    if mean_line:
+        if mean_line_kwargs is None:
+            mean_line_kwargs = {
+                "color": "black",
+                "linewidth": 1.2,
+                "zorder": 7
+            }
+
+        # Shorter than the individual violin width
+        seg_half = hue_width * 0.35
+
+        for x_i, x_val in enumerate(order):
+            for hue_val in hue_order:
+                row = summary[
+                    (summary[x_column] == x_val) &
+                    (summary[hue_column] == hue_val)
+                ]
+
+                if row.empty:
+                    continue
+
+                m = row["mean"].iloc[0]
+
+                if pd.isna(m):
+                    continue
+
+                xpos = x_i + offset_lookup[hue_val]
+
+                ax.plot(
+                    [xpos - seg_half, xpos + seg_half],
+                    [m, m],
+                    **mean_line_kwargs
+                )
+
+    # SEM bars, manually aligned to the dodged violin positions
+    if sem_bars:
+        if sem_kwargs is None:
+            sem_kwargs = {
+                "color": "black",
+                "elinewidth": 1.5,
+                "capsize": 3,
+                "capthick": 1.5,
+                "zorder": 8
+            }
+
+        for x_i, x_val in enumerate(order):
+            for hue_val in hue_order:
+                row = summary[
+                    (summary[x_column] == x_val) &
+                    (summary[hue_column] == hue_val)
+                ]
+
+                if row.empty:
+                    continue
+
+                m = row["mean"].iloc[0]
+                s = row["sem"].iloc[0]
+
+                if pd.isna(m) or pd.isna(s) or s == 0:
+                    continue
+
+                xpos = x_i + offset_lookup[hue_val]
+
+                ax.errorbar(
+                    xpos,
+                    m,
+                    yerr=s,
+                    fmt="none",
+                    **sem_kwargs
+                )
+
+    # Style
+    sns.despine()
+    ax.set_xlabel(x_axis_title, fontsize=18, weight="bold")
+    ax.set_ylabel(y_axis_title, fontsize=18, weight="bold")
+    ax.set_xticklabels(x_axis_ticks, fontsize=16, weight="bold")
+    ax.tick_params(axis="y", labelsize=16)
+
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+
+    ax.spines["left"].set_linewidth(1.5)
+    ax.spines["bottom"].set_linewidth(1.5)
+    ax.tick_params(width=1.5)
+
+    plt.yticks(weight="bold")
+    plt.xticks(weight="bold")
+
+    if max_y is not None:
+        plt.ylim(0, max_y)
+
+    fig.savefig(
+        str(output_path) + ".svg",
+        format="svg",
+        dpi=300,
+        bbox_inches="tight"
+    )
+    plt.close(fig)
     
 # Create a grouped plot of stacked bars using customized seaborn plots thanks to ChatGPT
 def snsGroupedStackedBarPlot(data, x, hue, weights, group, x_axis_title, y_axis_title, output_path):
@@ -1124,6 +1598,12 @@ def cellTypeHist(df, cols, output_path):
         return " + ".join(present) if present else "None"
 
     df["Composition"] = df.apply(composition_label, axis=1)
+    
+    # Print rows that were classified as "None"
+    none_df = df[df["Composition"] == "None"].copy()
+
+    print("\nRows flagged as Composition == 'None':")
+    print(none_df)
 
     # --- Count frequencies ---
     comp_counts = (df["Composition"]
@@ -1329,4 +1809,3 @@ def snsViolinPlot(
     #plt.tight_layout()
     fig.savefig(str(output_path) + ".svg", format="svg", dpi=300, bbox_inches="tight")
     plt.close(fig)
-
