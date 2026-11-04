@@ -13,9 +13,10 @@ import numpy as np
 import copy
 import matplotlib.ticker as ticker
 import sys
-import ClonalAnalysisFunctions as caf
-import ClonalAnalysisPlots as cap
-import ColPals as ColPals
+sys.path.append(r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Code Versions\ClonalAnalysis") # Folder containing ClonalAnalysisPlots and Functions
+import ClonalAnalysisFunctions_20260126 as caf
+import ClonalAnalysisPlots_20260707 as cap
+import ColPals_20260126 as ColPals
 import os
 from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
 import datetime
@@ -25,23 +26,36 @@ from pypalettes import load_cmap
 from itertools import combinations
 import seaborn as sns
 
-### User input
-input_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\Initial Submission\Nature Submission\GitHub Repository\Output/_rg_clones_20260224_152812.csv' # Path of _rg_clones csv file
-output_folder_name = '_simpleplotting_testing' # Desired output folder name
-overall_output_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\Initial Submission\Nature Submission\GitHub Repository\Output/' # Desired output folder
-
-### Prep
 # Import the rg_clones output csv table from ClonalAnalysis
+input_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\20251124 Data Analysis and Plots\Code Versions\ClonalAnalysis\Output\20251126_114705_125-200um_exclusion_all_complete_animals\_rg_clones_20251126_114705.csv'
 rg_clones_df = caf.read_csv(input_file_path, skip_rows = 0)
+# Reassign rostrocaudal level based on segment
+segment_to_level = {
+    's1': 'Cervical',
+    's2': 'Cervical',
+    's3': 'Thoracic',
+    's4': 'Thoracic',
+    's5': 'Lumbosacral',
+    's6': 'Lumbosacral'
+}
+
+rg_clones_df['Level'] = (
+    rg_clones_df['Segment']
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .map(segment_to_level)
+)
 
 # Find current date and time, which will be used in file naming
 now = datetime.datetime.now()
 curr_date = now.strftime("%Y%m%d_%H%M%S")
     
 # Create folder for the output
-chosen_name = '_simpleplotting_testing' # Choose the folder name
-output_folder = curr_date + output_folder_name
-os.makedirs(overall_output_file_path + output_folder) # Create folder
+chosen_name = '_simpleplotting' # Choose the folder name
+output_folder_name = curr_date + chosen_name
+overall_output_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Plotting/' + output_folder_name
+os.makedirs(overall_output_file_path) # Create folder
 
 # Keep text as text (not paths) in SVG/PDF/PS
 mpl.rcParams['svg.fonttype'] = 'none'  # <-- critical for Illustrator
@@ -118,7 +132,7 @@ def plotSize(df, columns, output_name, y_label = 'Clone size', plot = 'bar'):
     saveDataTableGroupMeans(df = df,
               columns = ['Clone', 'TM', 'Sum'],
               dep_var = 'Sum', 
-              ind_var = 'TM', 
+              ind_vars = 'TM', 
               output_path = output_path,
               order = ['E9.5', 'E10.5', 'E11.5'])
     # Save data to CSV
@@ -134,29 +148,79 @@ def extract_animal_id(clone_str: str) -> str:
 # df is the df inputted for plotting
 # columns is the list of columns of df you want saved in the spreadsheet
 # dep_var is the dependent variable (y column) on which stats should be performed
-def saveDataTableGroupMeans(df, columns, dep_var, ind_var, output_path, order):
-    df = df[columns]
+def saveDataTableGroupMeans(
+    df,
+    columns,
+    dep_var,
+    ind_vars,
+    output_path,
+    order=None
+):
+    """
+    Save plotted data and grouped summary statistics to Excel.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input dataframe.
+    columns : list[str]
+        Columns to save in the Data sheet.
+    dep_var : str
+        Dependent variable / y-column.
+    ind_vars : str or list[str]
+        Independent variable column(s) used for grouping.
+        Example: "TM" or ["Level", "TM"].
+    output_path : str
+        Output path prefix. Saves to f"{output_path}.xlsx".
+    orders : dict, optional
+        Optional category ordering for independent variables.
+        Example:
+            {
+                "Level": ["limb", "thoracic", "sacral"],
+                "TM": ["E9.5", "E10.5", "E11.5"]
+            }
+    """
+
+    if isinstance(ind_vars, str):
+        ind_vars = [ind_vars]
+
+    df = df[columns].copy()
+
     # Derive Animal_ID from first 8 characters of Clone
-    df['Animal'] = df['Clone'].apply(extract_animal_id)
-    # Move Animal_ID column to the front
-    cols = ['Animal'] + [c for c in df.columns if c != 'Animal']
+    df["Animal"] = df["Clone"].apply(extract_animal_id)
+
+    # Move Animal column to the front
+    cols = ["Animal"] + [c for c in df.columns if c != "Animal"]
     df = df[cols]
-    # Sort column in defined order
-    df[ind_var] = pd.Categorical(df[ind_var], categories=order, ordered=True)
-    df = df.sort_values(ind_var).reset_index(drop=True)
-    # Per-TM summary stats
+
+    # Apply categorical ordering if provided
+    if order is not None:
+        for ind_var in ind_vars:
+            if ind_var in order:
+                df[ind_var] = pd.Categorical(
+                    df[ind_var],
+                    categories=order[ind_var],
+                    ordered=True
+                )
+
+    # Sort by all independent variables
+    df = df.sort_values(ind_vars).reset_index(drop=True)
+
+    # Grouped summary stats
     stats_df = (
         df
-        .groupby(ind_var, as_index=False)
+        .groupby(ind_vars, as_index=False, observed=True)
         .agg(
-            Mean=(dep_var, 'mean'),
-            SEM=(dep_var, 'sem'),
-            N_clones=('Clone', 'size'),
-            N_animals=('Animal', lambda x: x.nunique())
+            Mean=(dep_var, "mean"),
+            SEM=(dep_var, "sem"),
+            SD=(dep_var, "std"),
+            N_clones=("Clone", "size"),
+            N_animals=("Animal", lambda x: x.nunique())
         )
     )
+
     # Save to Excel
-    excel_path = output_path + ".xlsx"  
+    excel_path = str(output_path) + ".xlsx"
 
     with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name="Data", index=False)
@@ -225,7 +289,11 @@ def saveDataTableProps(df1, df2, df2_columns, group_cols, output_path,
 
 ### Total cells
 
+# All cells
 plotSize(rg_clones_df, ['Total cells'], output_name = 'Total_cells_per_clone', plot = 'violin')
+
+# Only green hemilineage
+plotSize(rg_clones_df, ['Total cells_g'], output_name = 'Total_green_cells_per_clone', y_label = 'Green hemilineage size', plot = 'violin')
 
 # Ensure output folder exists
 size_output_path = overall_output_file_path + '/Clone size'
@@ -242,6 +310,15 @@ cap.snsHistPlot(array = size_array,
         binwidth = 5,
         binrange = [0,100],
         fig_size = (6,5))
+
+### Green vs red cell ratio
+total_g = rg_clones_df['Total cells_g'].sum()
+total_r = rg_clones_df['Total cells_r'].sum()
+num_g_only = (rg_clones_df['Total cells_r'] == 0).sum()
+num_r_only = (rg_clones_df['Total cells_g'] == 0).sum()
+g_vs_r_df = pd.DataFrame(data = {'Total green cells': [total_g], 'Total red cells': [total_r], 'Green-only clones': [num_g_only], 'Proportion green-only clones': [num_g_only / rg_clones_df.shape[0]], 'Proportion red-only clones': [num_r_only / rg_clones_df.shape[0]]})
+g_vs_r_output = size_output_path + '/g_vs_r_ratio_' + curr_date + '.csv'
+g_vs_r_df.to_csv(g_vs_r_output, index=False)
 
 ######################################################################################################################################################################
 ### Plots related to clone spread
@@ -268,7 +345,7 @@ cap.snsViolinPlot(
 saveDataTableGroupMeans(df = rg_clones_df,
               columns = ['Clone', 'TM', 'Spread XY'],
               dep_var = 'Spread XY', 
-              ind_var = 'TM', 
+              ind_vars = 'TM', 
               output_path = output_path,
               order = ['E9.5', 'E10.5', 'E11.5'])
 
@@ -292,7 +369,7 @@ cap.snsViolinPlot(
 saveDataTableGroupMeans(df = rg_clones_df,
               columns = ['Clone', 'TM', 'Spread Z'],
               dep_var = 'Spread Z', 
-              ind_var = 'TM', 
+              ind_vars = 'TM', 
               output_path = output_path,
               order = ['E9.5', 'E10.5', 'E11.5'])
 
@@ -329,6 +406,10 @@ os.makedirs(neuron_output_path, exist_ok=True)
 # Subset data
 rg_clones_df_neurons = rg_clones_df[rg_clones_df['Neuron count (incl Comm,MN)'] > 0]
 plotSize(rg_clones_df_neurons, ['Neuron count (incl Comm,MN)'], output_name = 'Neurons_per_clone', y_label = 'Neurons per clone', plot = 'violin')
+
+# Only green neurons
+plotSize(rg_clones_df_neurons, ['Neuron count (incl Comm,MN)_g'], output_name = 'Green_neurons_per_clone', y_label = 'Green neurons per clone', plot = 'violin')
+
 
 ### Proportion of unicolor clones
 rg_clones_df_neurons_unicolor = rg_clones_df_neurons.copy()
@@ -1002,7 +1083,7 @@ cap.snsViolinPlot(
 saveDataTableGroupMeans(df = rg_clones_df,
               columns = ['Clone', 'Laterality', 'Total cells'],
               dep_var = 'Total cells', 
-              ind_var = 'Laterality', 
+              ind_vars = 'Laterality', 
               output_path = output_path,
               order = ['uni', 'bi'])
 
@@ -1364,12 +1445,13 @@ saveDataTableProps(df1 = prop_comm_unibi_df,
 ### Plots related to comparisons between SC levels (RC)
 
 rg_clones_levels_df = rg_clones_df.copy()
-#rg_clones_levels_df['Level'] = rg_clones_levels_df['Level'].replace('sacral', 'limb')
+
+print('\nrg_clones_levels_df\n', rg_clones_levels_df)
 
 levels_output_path = overall_output_file_path + '/Level Comparison'
 os.makedirs(levels_output_path, exist_ok=True)
 
-# Clone size per level (limb:s1,s2,s5,s6 vs thoracic: s3,s4) (all clones)
+# Clone size per level
 output_path = levels_output_path + '/Clone_size_per_level' + curr_date
 cap.snsViolinPlot(
     x_column='Level',
@@ -1377,12 +1459,48 @@ cap.snsViolinPlot(
     df = rg_clones_levels_df[rg_clones_levels_df['TM'].isin(['E9.5', 'E10.5', 'E11.5'])], 
     x_axis_title='Level',
     y_axis_title='Clone size',
-    x_axis_ticks=['Limb', 'Thoracic', 'Sacral'],
+    x_axis_ticks=['Cervical', 'Thoracic', 'Lumbosacral'],
     output_path=output_path,
     colour=ColPals.lightgrey,
     fig_size=(3.5, 5),
-    order=['limb', 'thoracic', 'sacral'],      
+    order=['Cervical', 'Thoracic', 'Lumbosacral'],      
     max_y=None)
+
+# Clone size per level per TM
+output_path = levels_output_path + '/Clone_size_per_level_per_TM' + curr_date
+cap.snsGroupedViolinPlot(
+    x_column="Level",
+    y_column="Total cells",
+    hue_column="TM",
+    df=rg_clones_levels_df[rg_clones_levels_df["TM"].isin(["E9.5", "E10.5", "E11.5"])],
+    x_axis_title="Level",
+    y_axis_title="Clone size",
+    x_axis_ticks=['Cervical', 'Thoracic', 'Lumbosacral'],
+    output_path=output_path,
+    palette=[ColPals.light_orange,
+            ColPals.med_orange,
+            ColPals.dark_orange],
+    order=['Cervical', 'Thoracic', 'Lumbosacral'],
+    hue_order=["E9.5", "E10.5", "E11.5"],
+    fig_size=(4.5, 5),
+    max_y=None,
+    legend_title="TM"
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_levels_df[rg_clones_levels_df["TM"].isin(["E9.5", "E10.5", "E11.5"])],
+    columns=[
+        "Clone",
+        "Level",
+        "TM",
+        "Total cells"
+    ],
+    dep_var="Total cells",
+    ind_vars=["Level", "TM"],
+    output_path=output_path,
+    order={
+        "Level": ['Cervical', 'Thoracic', 'Lumbosacral'],
+        "TM": ["E9.5", "E10.5", "E11.5"]})
 
 # Symmetric clone size per level
 rg_clones_levels_symm_df = rg_clones_levels_df[rg_clones_levels_df['Type'] == 'Symmetric']
@@ -1393,11 +1511,11 @@ cap.snsViolinPlot(
     df = rg_clones_levels_symm_df[rg_clones_levels_symm_df['TM'].isin(['E9.5', 'E10.5', 'E11.5'])], 
     x_axis_title='Level',
     y_axis_title='Symmetric clone size',
-    x_axis_ticks=['Limb', 'Thoracic', 'Sacral'],
+    x_axis_ticks=['Cervical', 'Thoracic', 'Lumbosacral'],
     output_path=output_path,
     colour=ColPals.lightgrey,
     fig_size=(3.5, 5),
-    order=['limb', 'thoracic', 'sacral'],      
+    order=['Cervical', 'Thoracic', 'Lumbosacral'],      
     max_y=None)
 
 
@@ -1410,81 +1528,163 @@ cap.snsViolinPlot(
     df = rg_clones_levels_asymm_df[rg_clones_levels_asymm_df['TM'].isin(['E9.5', 'E10.5', 'E11.5'])], 
     x_axis_title='Level',
     y_axis_title='Asymmetric clone size',
-    x_axis_ticks=['Limb', 'Thoracic', 'Sacral'],
+    x_axis_ticks=['Cervical', 'Thoracic', 'Lumbosacral'],
     output_path=output_path,
     colour=ColPals.lightgrey,
     fig_size=(3.5, 5),
-    order=['limb', 'thoracic', 'sacral'],      
+    order=['Cervical', 'Thoracic', 'Lumbosacral'],      
     max_y=None)
 
-# Clone type per level
+# Neuron output per level (limb:s1,s2,s5,s6 vs thoracic: s3,s4) (all clones)
+rg_clones_levels_neurons_df = rg_clones_levels_df[rg_clones_levels_df['Neuron count (incl Comm,MN)'] > 0]
+output_path = levels_output_path + '/Neuron_output_per_level' + curr_date
+cap.snsGroupedViolinPlot(
+    x_column="Level",
+    y_column='Neuron count (incl Comm,MN)',
+    hue_column="TM",
+    df=rg_clones_levels_neurons_df[rg_clones_levels_neurons_df["TM"].isin(["E9.5", "E10.5", "E11.5"])],
+    x_axis_title="Level",
+    y_axis_title="Clone size",
+    x_axis_ticks=["Limb", "Thoracic", "Sacral"],
+    output_path=output_path,
+    palette=[ColPals.light_orange,
+            ColPals.med_orange,
+            ColPals.dark_orange],
+    order=["limb", "thoracic", "sacral"],
+    hue_order=["E9.5", "E10.5", "E11.5"],
+    fig_size=(4.5, 5),
+    max_y=None,
+    legend_title="TM"
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_levels_neurons_df[rg_clones_levels_neurons_df["TM"].isin(["E9.5", "E10.5", "E11.5"])],
+    columns=[
+        "Clone",
+        "Level",
+        "TM",
+        'Neuron count (incl Comm,MN)'
+    ],
+    dep_var='Neuron count (incl Comm,MN)',
+    ind_vars=["Level", "TM"],
+    output_path=output_path,
+    order={
+        "Level": ["limb", "thoracic", "sacral"],
+        "TM": ["E9.5", "E10.5", "E11.5"]})
+
+# Glial output per level (limb:s1,s2,s5,s6 vs thoracic: s3,s4) (all clones)
+rg_clones_levels_glia_df = rg_clones_levels_df[rg_clones_levels_df['Glia count (PA,FA,WF,GL,OG,OL)'] > 0] # glia-containing clones
+output_path = levels_output_path + '/Glial_output_per_level' + curr_date
+cap.snsGroupedViolinPlot(
+    x_column="Level",
+    y_column='Glia count (PA,FA,WF,GL,OG,OL)',
+    hue_column="TM",
+    df=rg_clones_levels_glia_df[rg_clones_levels_glia_df["TM"].isin(["E9.5", "E10.5", "E11.5"])],
+    x_axis_title="Level",
+    y_axis_title="Clone size",
+    x_axis_ticks=["Limb", "Thoracic", "Sacral"],
+    output_path=output_path,
+    palette=[ColPals.light_orange,
+            ColPals.med_orange,
+            ColPals.dark_orange],
+    order=["limb", "thoracic", "sacral"],
+    hue_order=["E9.5", "E10.5", "E11.5"],
+    fig_size=(4.5, 5),
+    max_y=None,
+    legend_title="TM"
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_levels_glia_df[rg_clones_levels_glia_df["TM"].isin(["E9.5", "E10.5", "E11.5"])],
+    columns=[
+        "Clone",
+        "Level",
+        "TM",
+        'Glia count (PA,FA,WF,GL,OG,OL)'
+    ],
+    dep_var='Glia count (PA,FA,WF,GL,OG,OL)',
+    ind_vars=["Level", "TM"],
+    output_path=output_path,
+    order={
+        "Level": ["limb", "thoracic", "sacral"],
+        "TM": ["E9.5", "E10.5", "E11.5"]})
+
+# Clone type per level (excluding unicolor clones) in neuron-containing clones
 output_path = levels_output_path + '/Clone_type_per_level' + curr_date
-rg_clones_levels_df_no_unicolor = rg_clones_levels_df[(rg_clones_levels_df['Type'].notna()) & (rg_clones_levels_df['Type'] != 'Unicolor')] # Exclude unicolor clones
-rg_clones_levels_type_df = caf.cloneTypeProportions(rg_clones_levels_df_no_unicolor, ['Level'], ['Type'], sort_TM = False, sort_level = True)
+rg_clones_levels_neurons_df_no_unicolor = rg_clones_levels_neurons_df[(rg_clones_levels_df['Type'].notna()) & (rg_clones_levels_df['Type'] != 'Unicolor')] # Exclude unicolor clones
+rg_clones_levels_neurons_type_df = caf.cloneTypeProportions(rg_clones_levels_neurons_df_no_unicolor, ['Level'], ['Type'], sort_TM = False, sort_level = True)
 
-cap.snsStackedBarPlot(data = rg_clones_levels_type_df, 
+cap.snsStackedBarPlot(data = rg_clones_levels_neurons_type_df, 
                   x = 'Level', 
                   hue = 'Type',
                   weights = 'Proportions',
                   x_axis_title = 'Level',
                   y_axis_title = 'Proportion',
-                  x_axis_ticks = ['Limb', 'Thoracic', 'Sacral'],
+                  x_axis_ticks = ['Cervical', 'Thoracic', 'Lumbosacral'],
                   output_path = output_path,
                   palette = ColPals.stckpal_4col,
                   fig_size = (3.5,5),
                   hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
 
-# Clone type per level per TM
+saveDataTableProps(df1 = rg_clones_levels_neurons_type_df,
+                   df2 = rg_clones_levels_neurons_df, 
+                   df2_columns = ['Clone', 'TM', 'Type'], 
+                   group_cols = ['TM', 'Type'], 
+                   output_path = output_path,
+                   ind_var = 'TM', 
+                   order = ['E9.5', 'E10.5', 'E11.5'])
+
+# Clone type per level per TM (below are not restricted to neuron-containing at the moment)
 # E9.5
-output_path = levels_output_path + '/Clone_type_per_level_E9' + curr_date
-rg_clones_levels_type_df_E9 = rg_clones_levels_df_no_unicolor[rg_clones_levels_df_no_unicolor['TM'] == 'E9.5']
-rg_clones_levels_type_df_E9 = caf.cloneTypeProportions(rg_clones_levels_type_df_E9, ['Level'], ['Type'], sort_TM = False, sort_level = True)
+# output_path = levels_output_path + '/Clone_type_per_level_E9' + curr_date
+# rg_clones_levels_type_df_E9 = rg_clones_levels_df_no_unicolor[rg_clones_levels_df_no_unicolor['TM'] == 'E9.5']
+# rg_clones_levels_type_df_E9 = caf.cloneTypeProportions(rg_clones_levels_type_df_E9, ['Level'], ['Type'], sort_TM = False, sort_level = True)
 
-cap.snsStackedBarPlot(data = rg_clones_levels_type_df_E9, 
-                  x = 'Level', 
-                  hue = 'Type',
-                  weights = 'Proportions',
-                  x_axis_title = 'Level',
-                  y_axis_title = 'Proportion',
-                  x_axis_ticks = ['Limb', 'Thoracic', 'Sacral'],
-                  output_path = output_path,
-                  palette = ColPals.stckpal_4col,
-                  fig_size = (3.5,5),
-                  hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
+# cap.snsStackedBarPlot(data = rg_clones_levels_type_df_E9, 
+#                   x = 'Level', 
+#                   hue = 'Type',
+#                   weights = 'Proportions',
+#                   x_axis_title = 'Level',
+#                   y_axis_title = 'Proportion',
+#                   x_axis_ticks = ['Cervical', 'Thoracic', 'Lumbosacral'],
+#                   output_path = output_path,
+#                   palette = ColPals.stckpal_4col,
+#                   fig_size = (3.5,5),
+#                   hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
 
-# E10.5
-output_path = levels_output_path + '/Clone_type_per_level_E10' + curr_date
-rg_clones_levels_type_df_E10 = rg_clones_levels_df_no_unicolor[rg_clones_levels_df_no_unicolor['TM'] == 'E10.5']
-rg_clones_levels_type_df_E10 = caf.cloneTypeProportions(rg_clones_levels_type_df_E10, ['Level'], ['Type'], sort_TM = False, sort_level = True)
+# # E10.5
+# output_path = levels_output_path + '/Clone_type_per_level_E10' + curr_date
+# rg_clones_levels_type_df_E10 = rg_clones_levels_df_no_unicolor[rg_clones_levels_df_no_unicolor['TM'] == 'E10.5']
+# rg_clones_levels_type_df_E10 = caf.cloneTypeProportions(rg_clones_levels_type_df_E10, ['Level'], ['Type'], sort_TM = False, sort_level = True)
 
-cap.snsStackedBarPlot(data = rg_clones_levels_type_df_E10, 
-                  x = 'Level', 
-                  hue = 'Type',
-                  weights = 'Proportions',
-                  x_axis_title = 'Level',
-                  y_axis_title = 'Proportion',
-                  x_axis_ticks = ['Limb', 'Thoracic', 'Sacral'],
-                  output_path = output_path,
-                  palette = ColPals.stckpal_4col,
-                  fig_size = (3.5,5),
-                  hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
+# cap.snsStackedBarPlot(data = rg_clones_levels_type_df_E10, 
+#                   x = 'Level', 
+#                   hue = 'Type',
+#                   weights = 'Proportions',
+#                   x_axis_title = 'Level',
+#                   y_axis_title = 'Proportion',
+#                   x_axis_ticks = ['Cervical', 'Thoracic', 'Lumbosacral'],
+#                   output_path = output_path,
+#                   palette = ColPals.stckpal_4col,
+#                   fig_size = (3.5,5),
+#                   hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
 
-# E11.5
-output_path = levels_output_path + '/Clone_type_per_level_E11' + curr_date
-rg_clones_levels_type_df_E11 = rg_clones_levels_df_no_unicolor[rg_clones_levels_df_no_unicolor['TM'] == 'E11.5']
-rg_clones_levels_type_df_E11 = caf.cloneTypeProportions(rg_clones_levels_type_df_E11, ['Level'], ['Type'], sort_TM = False, sort_level = True)
+# # E11.5
+# output_path = levels_output_path + '/Clone_type_per_level_E11' + curr_date
+# rg_clones_levels_type_df_E11 = rg_clones_levels_df_no_unicolor[rg_clones_levels_df_no_unicolor['TM'] == 'E11.5']
+# rg_clones_levels_type_df_E11 = caf.cloneTypeProportions(rg_clones_levels_type_df_E11, ['Level'], ['Type'], sort_TM = False, sort_level = True)
 
-cap.snsStackedBarPlot(data = rg_clones_levels_type_df_E11, 
-                  x = 'Level', 
-                  hue = 'Type',
-                  weights = 'Proportions',
-                  x_axis_title = 'Level',
-                  y_axis_title = 'Proportion',
-                  x_axis_ticks = ['Limb', 'Thoracic', 'Sacral'],
-                  output_path = output_path,
-                  palette = ColPals.stckpal_4col,
-                  fig_size = (3.5,5),
-                  hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
+# cap.snsStackedBarPlot(data = rg_clones_levels_type_df_E11, 
+#                   x = 'Level', 
+#                   hue = 'Type',
+#                   weights = 'Proportions',
+#                   x_axis_title = 'Level',
+#                   y_axis_title = 'Proportion',
+#                   x_axis_ticks = ['Cervical', 'Thoracic', 'Lumbosacral'],
+#                   output_path = output_path,
+#                   palette = ColPals.stckpal_4col,
+#                   fig_size = (3.5,5),
+#                   hue_order = ['Symmetric', 'Asymmetric', 'Small neurogenic', 'Terminal neurogenic'])
 
 # Clone laterality per level
 output_path = levels_output_path + '/Clone_laterality_per_level' + curr_date
@@ -1499,7 +1699,7 @@ cap.snsStackedBarPlot(data = rg_clones_levels_laterality_prop_df,
                   weights = 'Proportions',
                   x_axis_title = 'Level',
                   y_axis_title = 'Proportion',
-                  x_axis_ticks = ['limb', 'thoracic', 'sacral'],
+                  x_axis_ticks = ['Cervical', 'Thoracic', 'Lumbosacral'],
                   output_path = output_path,
                   palette = ColPals.stckpal_lat,
                   fig_size = (3.5,5),
