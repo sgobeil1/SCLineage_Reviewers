@@ -16,6 +16,8 @@ This repository is organized into **three pipelines**, each with its own **Guide
   Guide: `Morphological Analysis/Morphological Analysis Guide.md`  
   Demo inputs: `Morphological Analysis/Demo/`
 
+- **Spatial transcriptomic analysis of MADM clones (XenMADM) and generation of an E18.5 mouse spinal cord atlas**  
+  Guide: `Spatial Transcriptomics/XenMADM Guide.md`  
 ---
 
 ## System requirements
