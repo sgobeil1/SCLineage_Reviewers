@@ -1,0 +1,291 @@
+import numpy as np
+import pandas as pd
+
+import ColPals as ColPals
+
+
+### Single source for E13 cell identities
+
+CELL_IDENTITY_DEFINITIONS = [
+    {
+        "identity": "Progenitor",
+        "colour": "black",
+    },
+    {
+        "identity": "Differentiating Neuron",
+        "colour": "#283394",
+    },
+    {
+        "identity": "dI1 (Barhl1+)",
+        "colour": "#ABDDA4",
+    },
+    {
+        "identity": "dI2 (FoxD3+En1-)",
+        "colour": "#17B684",
+    },
+    {
+        "identity": "dI3 (dorsal Isl1/2+)",
+        "colour": "#7BC87C",
+    },
+    {
+        "identity": "dI4 (Sall3+)",
+        "colour": "#283394",
+    },
+    {
+        "identity": "dI5 (Lmx1b+ and/or Tlx3+)",
+        "colour": "#3288BD",
+    },
+    {
+        "identity": "dI4/5/6 (only Lbx1+)",
+        "colour": "#A6CEE3",
+    },
+    {
+        "identity": "dI6 (Dmrt3+)",
+        "colour": "#E6F598",
+    },
+    {
+        "identity": "V0 (Evx1+)",
+        "colour": "#FEE08B",
+    },
+    {
+        "identity": "V1 (En1+)",
+        "colour": "#FDCB6E",
+    },
+    {
+        "identity": "V2a (Chx10+)",
+        "colour": "#FDAE61",
+    },
+    {
+        "identity": "V2b (Gata3+)",
+        "colour": "#F46D43",
+    },
+    {
+        "identity": "V3 (Nkx2.2+)",
+        "colour": "#D53E4F",
+    },
+    {
+        "identity": "Inhibitory INs (only Lhx5/Pax2+)",
+        "colour": "#5F5F5F",
+    },
+    {
+        "identity": "Unidentified dorsal",
+        "colour": ColPals.lightgrey,
+    },
+    {
+        "identity": "Unidentified ventral",
+        "colour": '#D3D3D3',
+    },
+    {
+        "identity": "Unidentified cells",
+        "colour": ColPals.lightgrey,
+    },
+]
+
+
+CELL_IDENTITY_ORDER = [
+    definition["identity"]
+    for definition in CELL_IDENTITY_DEFINITIONS
+]
+
+
+CELL_IDENTITY_PALETTE = {
+    definition["identity"]: definition["colour"]
+    for definition in CELL_IDENTITY_DEFINITIONS
+}
+
+
+# Excludes progenitors
+CELL_IDENTITY_ORDER_NO_PR = [
+    identity
+    for identity in CELL_IDENTITY_ORDER
+    if identity != "Progenitor"
+]
+
+
+CELL_IDENTITY_PALETTE_NO_PR = {
+    identity: CELL_IDENTITY_PALETTE[identity]
+    for identity in CELL_IDENTITY_ORDER_NO_PR
+}
+
+# list of raw spreadsheet columns that can contribute to identity assignment
+CELL_IDENTITY_MARKERS = [
+    "Sall3",
+    "Lmx1b",
+    "Tlx3",
+    "Lbx1",
+    "Barhl1",
+    "FoxD3",
+    "Isl",
+    "Dmrt3",
+    "Evx1",
+    "En1",
+    "Chx10",
+    "Gata3",
+    "Nkx2.2",
+    "Lhx5/Pax2",
+]
+
+
+CELL_TYPE_HISTOGRAM_LABELS = {
+    "dI4": "dI4 (Sall3+)",
+    "dI5 (Lmx1b+ and/or Tlx3+)": "dI5 (Lmx1b+ and/or Tlx3+)",
+    "dI4/5/6": "dI4/5/6 (only Lbx1+)",
+    "dI1": "dI1 (Barhl1+)",
+    "dI2": "dI2 (FoxD3+En1-)",
+    "dI3": "dI3 (dorsal Isl1/2+)",
+    "dI6": "dI6 (Dmrt3+)",
+    "V0": "V0 (Evx1+)",
+    "V1": "V1 (En1+)",
+    "V2a": "V2a (Chx10+)",
+    "V2b": "V2b (Gata3+)",
+    "V3": "V3 (Nkx2.2+)",
+    "Inhib": "Inhibitory INs (only Lhx5/Pax2+)",
+}
+
+
+IDENTITY_ANNOTATION_COLUMNS = [
+    "Positive markers",
+    "Assigned cell identity",
+    "Assigned cell colour",
+]
+
+
+def marker_positive(value):
+    """Return True for entries containing yes or maybe."""
+    if pd.isna(value):
+        return False
+
+    value = str(value).strip().lower()
+    return "yes" in value or "maybe" in value
+
+
+def get_positive_markers(row):
+    """Return all configured positive markers for one cell."""
+    return [
+        marker
+        for marker in CELL_IDENTITY_MARKERS
+        if marker_positive(row.get(marker, np.nan))
+    ]
+
+
+def assign_cell_identity(row):
+    """
+    Assign exactly one identity.
+
+    Specific identities take precedence over Lbx1.
+    Lhx5/Pax2 and Lbx1 are assigned only when exclusive.
+    Rules are in order of precedence.
+    """
+    # Progenitor takes highest precedence
+    if str(row.get("Glial cell", "")).strip().lower() == "pr":
+        return "Progenitor"
+
+    # Differentiating neuron takes precedence over molecular identity.
+    if marker_positive(row.get("Differentiating Neuron", np.nan)):
+        return "Differentiating Neuron"
+
+    positive = set(get_positive_markers(row))
+
+    positive = set(get_positive_markers(row))
+
+    identity_rules = [
+        ("dI5 (Lmx1b+ and/or Tlx3+)", "Lmx1b" in positive or 'Tlx3' in positive),
+        ("dI1 (Barhl1+)", "Barhl1" in positive),
+        (
+            "dI2 (FoxD3+En1-)",
+            "FoxD3" in positive and "En1" not in positive,
+        ),
+        ("dI3 (dorsal Isl1/2+)", "Isl" in positive),
+        ("dI6 (Dmrt3+)", "Dmrt3" in positive),
+        ("V0 (Evx1+)", "Evx1" in positive),
+        ("V1 (En1+)", "En1" in positive),
+        ("V2a (Chx10+)", "Chx10" in positive),
+        ("V2b (Gata3+)", "Gata3" in positive),
+        ("V3 (Nkx2.2+)", "Nkx2.2" in positive),
+        ("dI4 (Sall3+)", "Sall3" in positive),
+        (
+            "Inhibitory INs (only Lhx5/Pax2+)",
+            positive == {"Lhx5/Pax2"},
+        ),
+        (
+            "dI4/5/6 (only Lbx1+)",
+            positive == {"Lbx1"},
+        ),
+    ]
+
+    for identity, matches in identity_rules:
+        if matches:
+            return identity
+
+    # If no molecular identity was assigned, use position relative
+    # to the dI4/5 border to classify unidentified cells.
+    dv_border = (
+        str(row.get("D/V to DI4/5 border", ""))
+        .strip()
+        .lower()
+    )
+
+    if dv_border in {"d", "dorsal"}:
+        return "Unidentified dorsal"
+
+    if dv_border in {"v", "ventral"}:
+        return "Unidentified ventral"
+
+    return "Unidentified cells"
+
+
+def add_cell_identity_annotations(df):
+    """Add positive markers, assigned identity, and assigned colour."""
+    annotated = df.copy()
+
+    positive_marker_lists = annotated.apply(
+        get_positive_markers,
+        axis=1,
+    )
+
+    annotated["Positive markers"] = positive_marker_lists.apply(
+        lambda markers: "; ".join(markers)
+    )
+
+    annotated["Assigned cell identity"] = annotated.apply(
+        assign_cell_identity,
+        axis=1,
+    )
+
+    annotated["Assigned cell colour"] = (
+        annotated["Assigned cell identity"]
+        .map(CELL_IDENTITY_PALETTE)
+    )
+
+    return annotated
+
+
+def add_identity_counts(
+    clone_dict,
+    clone_cells,
+    left_pos=None,
+    right_pos=None,
+):
+    """
+    Add identity counts to a clone summary using the assigned identity column.
+
+    This guarantees that clone composition tables use the same mutually
+    exclusive assignments as the exported cell-level table.
+    """
+    assigned = clone_cells["Assigned cell identity"]
+
+    for identity in CELL_IDENTITY_ORDER:
+        identity_pos = assigned == identity
+        clone_dict[identity] = int(identity_pos.sum())
+
+        if left_pos is not None:
+            clone_dict[identity + "_l"] = int(
+                (identity_pos & left_pos).sum()
+            )
+
+        if right_pos is not None:
+            clone_dict[identity + "_r"] = int(
+                (identity_pos & right_pos).sum()
+            )
+
+    return clone_dict
