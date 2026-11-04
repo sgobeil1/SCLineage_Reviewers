@@ -1,0 +1,3183 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from mpl_toolkits.mplot3d import Axes3D
+import math
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from scipy.spatial import distance_matrix
+from scipy import stats
+import numpy as np
+import copy
+import matplotlib.ticker as ticker
+import sys
+sys.path.append(r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Code Versions\ClonalAnalysis") # Folder containing ClonalAnalysisPlots and Functions
+import ClonalAnalysisFunctions_20260126 as caf
+import ClonalAnalysisPlots_20260707 as cap
+import ColPals as ColPals
+import clone_order_20261018 as co
+import E13CellIdentity_20261018 as e13id
+import os
+from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
+import datetime
+from statistics import mean
+import random
+from pypalettes import load_cmap
+from itertools import combinations
+import seaborn as sns
+from matplotlib.colors import ListedColormap
+from matplotlib.colors import to_rgba
+from matplotlib.patches import Rectangle
+
+# Import csv files
+input_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13.5 SamplesOverview_20261018.csv'
+clone_overview = caf.read_csv(input_file_path, skip_rows = 0)
+numeric_clone_overview_cols = [
+    "Clone size (# sections)",
+    "Clone size (um)",
+    "Distance from previous clone R/G (# sections)",
+    "Distance from previous clone R/G (um)",
+    "Distance from previous clone Y (# sections)",
+    "Distance from previous clone Y (um)",
+    "Distance from nearest preceeding clone (R/G/Y)",
+    "Number of Y clones in animal (>1 cell)",
+    "Number of R/G clones in animal  (>1 cell)",
+    "Number of total clones in animal  (>1 cell)",
+]
+
+for col in numeric_clone_overview_cols:
+    if col in clone_overview.columns:
+        clone_overview[col] = pd.to_numeric(
+            clone_overview[col],
+            errors="coerce", # Turn values like -, NA, blanks, into NaN
+        )
+
+input_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Code Versions\E13.5 Clonal Analysis\Input_File_E13_20261015.csv'
+input_file = caf.read_csv(input_file_path, skip_rows = 0)
+
+# Find current date and time, which will be used in file naming
+now = datetime.datetime.now()
+curr_date = now.strftime("%Y%m%d_%H%M%S")
+
+# Create folder for the output
+chosen_name = '_E13analysis' # Choose the folder name
+output_folder_name = curr_date + chosen_name
+overall_output_file_path = r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\Plotting/' + output_folder_name
+os.makedirs(overall_output_file_path) # Create folder
+
+# Keep text as text (not paths) in SVG/PDF/PS
+mpl.rcParams['svg.fonttype'] = 'none'  # <-- critical for Illustrator
+mpl.rcParams['pdf.fonttype'] = 42      # TrueType; helps if you also export PDF
+mpl.rcParams['ps.fonttype']  = 42
+
+# (Optional) pick a common font that Illustrator will have
+mpl.rcParams['font.family'] = 'sans-serif'
+mpl.rcParams['font.sans-serif'] = ['Arial']  # or 'Helvetica', etc.
+
+# Add a column with clone_id by merging entries in 'Litter', 'animal', and 'clone id'
+# and separating them by an underscore and adding a c before the clone id
+# in the format S166_a2_c1. Also duplicate it into 'Clone' so the helper
+# functions from ClonalAnalysisSimplePlotting work without modification.
+def format_clone_component(value):
+    """Format clone IDs read from CSV/Excel so 1.0 becomes 1 and blanks stay blank."""
+    if pd.isna(value):
+        return ''
+    text = str(value).strip()
+    if text.endswith('.0'):
+        text = text[:-2]
+    return text
+
+def make_clone_id(row):
+    litter = format_clone_component(row['Litter'])
+    animal = format_clone_component(row['animal'])
+    clone_id = format_clone_component(row['clone id'])
+    return f"{litter}_{animal}_c{clone_id}"
+
+clone_overview = clone_overview.copy()
+clone_overview['clone_id'] = clone_overview.apply(make_clone_id, axis=1)
+clone_overview['Clone'] = clone_overview['clone_id']
+
+# RC level info
+rc_level_lookup_df = clone_overview[
+    ["Clone", "RC Level"]
+].copy()
+
+# Clean the clone IDs
+rc_level_lookup_df["Clone"] = (
+    rc_level_lookup_df["Clone"]
+    .astype("string")
+    .str.strip()
+)
+
+# Clean RC Level values; blanks and "-" become missing
+rc_level_lookup_df["RC Level"] = (
+    rc_level_lookup_df["RC Level"]
+    .astype("string")
+    .str.strip()
+    .replace({
+        "": pd.NA,
+        "-": pd.NA,
+        "NA": pd.NA,
+        "na": pd.NA,
+        "nan": pd.NA,
+        "None": pd.NA,
+    })
+)
+
+# Keep only valid clone IDs
+rc_level_lookup_df = rc_level_lookup_df[
+    rc_level_lookup_df["Clone"].notna()
+    & ~rc_level_lookup_df["Clone"].isin(["", "__c"])
+].copy()
+
+# Keep only the allowed RC levels
+rc_level_lookup_df.loc[
+    ~rc_level_lookup_df["RC Level"].isin(["Ce", "Lu", "Th", "Sa"]),
+    "RC Level"
+] = pd.NA
+
+# Ensure exactly one row per clone
+rc_level_lookup_df = (
+    rc_level_lookup_df
+    .drop_duplicates(subset=["Clone", "RC Level"])
+    .drop_duplicates(subset="Clone", keep="first")
+    .reset_index(drop=True)
+)
+
+# In 'TM' column, change commas into periods and add a preceding 'E'
+# e.g. '9,5' becomes 'E9.5'. Invalid/placeholder entries such as '-' are set to NaN.
+def format_tm(value):
+    if pd.isna(value):
+        return np.nan
+    text = str(value).strip()
+    if text in ['', '-', 'NA', 'na', 'nan', 'None']:
+        return np.nan
+    text = text.replace(',', '.')
+    if not text.startswith('E'):
+        text = 'E' + text
+    return text
+
+clone_overview['TM'] = clone_overview['TM'].apply(format_tm)
+
+def extract_animal_id(clone_str: str) -> str:
+    # Gets Animal from Clone ID: e.g. S166_a2_c1 returns S166_a2
+    parts = str(clone_str).split('_')
+    if len(parts) >= 3:
+        return '_'.join(parts[:2])
+    return str(clone_str)
+
+
+# Save plotted data in an excel spreadsheet where first sheet contains the data and the second sheet contains some statistics. 
+# df is the df inputted for plotting
+# columns is the list of columns of df you want saved in the spreadsheet
+# dep_var is the dependent variable (y column) on which stats should be performed
+def saveDataTableGroupMeans(
+    df,
+    columns,
+    dep_var,
+    ind_vars,
+    output_path,
+    order=None
+):
+    """
+    Save plotted data and grouped summary statistics to Excel.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input dataframe.
+    columns : list[str]
+        Columns to save in the Data sheet.
+    dep_var : str
+        Dependent variable / y-column.
+    ind_vars : str or list[str]
+        Independent variable column(s) used for grouping.
+        Example: "TM" or ["Level", "TM"].
+    output_path : str
+        Output path prefix. Saves to f"{output_path}.xlsx".
+    orders : dict, optional
+        Optional category ordering for independent variables.
+        Example:
+            {
+                "Level": ["limb", "thoracic", "sacral"],
+                "TM": ["E9.5", "E10.5", "E11.5"]
+            }
+    """
+
+    if isinstance(ind_vars, str):
+        ind_vars = [ind_vars]
+
+    df = df[columns].copy()
+
+    # Derive Animal_ID from first 8 characters of Clone
+    df["Animal"] = df["Clone"].apply(extract_animal_id)
+
+    # Move Animal column to the front
+    cols = ["Animal"] + [c for c in df.columns if c != "Animal"]
+    df = df[cols]
+
+    # Apply categorical ordering if provided
+    if order is not None:
+        for ind_var in ind_vars:
+            if ind_var in order:
+                df[ind_var] = pd.Categorical(
+                    df[ind_var],
+                    categories=order[ind_var],
+                    ordered=True
+                )
+
+    # Sort by all independent variables
+    df = df.sort_values(ind_vars).reset_index(drop=True)
+
+    # Grouped summary stats
+    stats_df = (
+        df
+        .groupby(ind_vars, as_index=False, observed=True)
+        .agg(
+            Mean=(dep_var, "mean"),
+            SEM=(dep_var, "sem"),
+            SD=(dep_var, "std"),
+            N_clones=("Clone", "size"),
+            N_animals=("Animal", lambda x: x.nunique())
+        )
+    )
+
+    # Save to Excel
+    excel_path = str(output_path) + ".xlsx"
+
+    with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name="Data", index=False)
+        stats_df.to_excel(writer, sheet_name="Stats", index=False)
+
+# Save three-sheet Excel for proportions data:
+#   Sheet 1: selected columns from df2 (clone-level), incl. Animal
+#   Sheet 2: df1 summary (e.g. TM × Type × Proportions)
+#   Sheet 3: counts (N_clones, N_animals) from df2 grouped by group_cols
+#
+# df1         : summary table (e.g. output of caf.cloneTypeProportions)
+# df2         : clone-level table (e.g. rg_clones_df_glia_no_unicolor)
+# df2_columns : list of columns from df2 to put on sheet 1
+# group_cols  : columns to group on for counts, e.g. ['TM', 'Type']
+# output_path : path *without* extension (".xlsx" will be appended)
+# ind_var     : optional main independent variable for ordering (e.g. 'TM')
+# order       : optional categorical order for ind_var (e.g. ['E9.5','E10.5','E11.5'])
+def saveDataTableProps(df1, df2, df2_columns, group_cols, output_path,
+                          ind_var=None, order=None):
+
+    # Sheet 1: clone-level data from df2
+    df2_clones = df2.copy()
+
+    # Derive Animal from Clone
+    if 'Clone' not in df2_clones.columns:
+        raise KeyError("df2 must contain a 'Clone' column.")
+    df2_clones['Animal'] = df2_clones['Clone'].apply(extract_animal_id)
+
+    # Ensure required columns are included
+    extra_needed = set(group_cols + ['Clone', 'Animal'])
+    cols_sheet1 = list(extra_needed.union(df2_columns))
+
+    # Re-order columns
+    ordered_cols = []
+    for c in ['Animal', 'Clone'] + group_cols + df2_columns:
+        if c in cols_sheet1 and c not in ordered_cols:
+            ordered_cols.append(c)
+    for c in cols_sheet1:
+        if c not in ordered_cols:
+            ordered_cols.append(c)
+
+    df2_clones = df2_clones[ordered_cols]
+
+    # Sheet 2
+    df1_summary = df1.copy()
+    if ind_var is not None and order is not None and ind_var in df1_summary.columns:
+        df1_summary[ind_var] = pd.Categorical(df1_summary[ind_var],
+                                              categories=order,
+                                              ordered=True)
+        df1_summary = df1_summary.sort_values(ind_var).reset_index(drop=True)
+
+    # Sheet 3 (number of clones and animals)
+    # Reuse Animal column from df2_clones
+    for gc in group_cols:
+        if gc not in df2_clones.columns:
+            raise KeyError(f"group column '{gc}' not found in df2.")
+
+    # Write Excel with 3 sheets
+    excel_path = output_path + ".xlsx"
+    with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
+        df2_clones.to_excel(writer, sheet_name="Clones", index=False)
+        df1_summary.to_excel(writer, sheet_name="Summary", index=False)
+        
+###########################################################################################################################################################################################
+### Plots related to clone frequency
+
+clone_frequency_output_path = overall_output_file_path + '/Clone frequency'
+os.makedirs(clone_frequency_output_path, exist_ok=True)
+
+# ------------------------------------------------------------
+# Clone frequency: overview entries versus input/analysed clones
+# ------------------------------------------------------------
+# The overview is the complete list. The input file lists clones
+# selected for analysis; the actual analysis below additionally skips
+# Excluded == yes and missing spreadsheet paths.
+def canonical_input_clone_id(row):
+    return (
+        format_clone_component(row['Litter']) + '_' +
+        format_clone_component(row['Animal']) + '_c' +
+        format_clone_component(row['Clone'])
+    )
+
+clone_frequency_overview = clone_overview.copy()
+clone_frequency_overview['Animal_ID'] = (
+    clone_frequency_overview['Litter'].apply(format_clone_component) + '_' +
+    clone_frequency_overview['animal'].apply(format_clone_component)
+)
+
+clone_frequency_input = input_file.copy()
+clone_frequency_input['Clone'] = clone_frequency_input.apply(canonical_input_clone_id, axis=1)
+clone_frequency_input['Animal_ID'] = (
+    clone_frequency_input['Litter'].apply(format_clone_component) + '_' +
+    clone_frequency_input['Animal'].apply(format_clone_component)
+)
+clone_frequency_input['Eligible for analysis'] = (
+    ~clone_frequency_input['Excluded'].fillna('').astype(str).str.strip().str.lower().eq('yes')
+    & clone_frequency_input['Spreadsheet'].notna()
+    & clone_frequency_input['Spreadsheet'].astype(str).str.strip().ne('')
+)
+
+# Count each input/overview row as requested, while also reporting the
+# eligible entries that the spreadsheet-loading loop will attempt.
+frequency_animals = sorted(
+    set(clone_frequency_overview['Animal_ID']) |
+    set(clone_frequency_input['Animal_ID'])
+)
+clone_frequency_per_animal = pd.DataFrame({'Animal': frequency_animals})
+
+for column_name, source_df in [
+    ('Total clones (overview entries)', clone_frequency_overview),
+    ('Clones in Input_File', clone_frequency_input),
+    ('Eligible analysis clones', clone_frequency_input.loc[clone_frequency_input['Eligible for analysis']]),
+]:
+    counts = source_df.groupby('Animal_ID').size()
+    clone_frequency_per_animal[column_name] = (
+        clone_frequency_per_animal['Animal'].map(counts).fillna(0).astype(int)
+    )
+
+clone_frequency_summary = pd.DataFrame([{
+    'Total clones (overview entries)': len(clone_frequency_overview),
+    'Clones in Input_File': len(clone_frequency_input),
+    'Eligible analysis clones': int(clone_frequency_input['Eligible for analysis'].sum()),
+    'Animals in overview': clone_frequency_overview['Animal_ID'].nunique(),
+    'Animals in Input_File': clone_frequency_input['Animal_ID'].nunique(),
+}])
+
+frequency_excel_path = os.path.join(
+    clone_frequency_output_path, 'Clone_frequency_summary_' + curr_date + '.xlsx'
+)
+with pd.ExcelWriter(frequency_excel_path, engine='xlsxwriter') as writer:
+    clone_frequency_summary.to_excel(writer, sheet_name='Summary', index=False)
+    clone_frequency_per_animal.to_excel(writer, sheet_name='Per animal', index=False)
+    clone_frequency_input[
+        ['Clone', 'Animal_ID', 'Eligible for analysis', 'Excluded', 'Spreadsheet']
+    ].to_excel(writer, sheet_name='Input clones', index=False)
+
+print('Clone frequency summary saved:', frequency_excel_path)
+print(clone_frequency_summary.to_string(index=False))
+
+tm_order = ['E9.5', 'E10.5']
+tm_ticks = ['E9.5', 'E10.5']
+
+# Plot approx. rostrocaudal clone spread per TM (E9.5 and E10.5) of R/G clones
+clone_overview_temp = clone_overview[~clone_overview['clone morphology'].str.contains('yellow', na = False)]
+clone_overview_temp['Clone size (um)'] = clone_overview_temp['Clone size (um)'].replace(0, pd.NA) 
+clone_spread_df = clone_overview_temp[
+    clone_overview_temp['TM'].isin(tm_order) &
+    clone_overview_temp['Clone size (um)'].notna()
+].copy()
+
+output_path = clone_frequency_output_path + '/Approx_rostrocaudal_clone_spread_' + curr_date
+cap.snsViolinPlot(
+    x_column='TM',
+    y_column='Clone size (um)',
+    df=clone_spread_df,
+    x_axis_title='TM',
+    y_axis_title='Rostrocaudal intra-clone spread (\u03bcm)',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.0, 5),
+    order=tm_order,
+    max_y=None
+)
+
+saveDataTableGroupMeans(
+    df=clone_spread_df,
+    columns=['Clone', 'TM', 'Clone size (um)'],
+    dep_var='Clone size (um)',
+    ind_vars='TM',
+    output_path=output_path,
+    order=tm_order
+)
+
+# Plot approx. rostrocaudal inter-clone distance per TM (E9.5 and E10.5) of R/G clones
+clone_overview_temp['Distance from previous clone R/G (um)'] = clone_overview_temp['Distance from previous clone R/G (um)'].replace(0, pd.NA)
+interclone_distance_df = clone_overview_temp[
+    clone_overview_temp['TM'].isin(tm_order) &
+    clone_overview_temp['Distance from previous clone R/G (um)'].notna()
+].copy()
+
+
+
+output_path = clone_frequency_output_path + '/RC_interclone_distance_RG_' + curr_date
+cap.snsViolinPlot(
+    x_column='TM',
+    y_column='Distance from previous clone R/G (um)',
+    df=interclone_distance_df,
+    x_axis_title='TM',
+    y_axis_title= 'Rostrocaudal inter-clone distance (\u03bcm)',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.0, 5),
+    order=tm_order,
+    max_y=None
+)
+
+saveDataTableGroupMeans(
+    df=interclone_distance_df,
+    columns=['Clone', 'TM', 'Distance from previous clone R/G (um)'],
+    dep_var='Distance from previous clone R/G (um)',
+    ind_vars='TM',
+    output_path=output_path,
+    order=tm_order
+)
+
+
+###########################################################################################################################################################################################
+### Clone quantification
+
+# Use input_file to retrieve all the clone csv/xlsx files and concatenate them into one large df. Excluded clones and clones without paths are skipped. Not all clones will have exactly the same columns. New columns
+# are automatically added and filled with NaNs where there is no info. The sample individual clone spreadsheet has the expected cell-level format.
+
+tables_output_path = overall_output_file_path + '/Summary data tables'
+os.makedirs(tables_output_path, exist_ok=True)
+
+# Import all individual clone spreadsheets listed in the input file
+all_clone_cells_df = pd.DataFrame()
+clone_load_log = pd.DataFrame()
+
+for row in range(0, input_file.shape[0]):
+    curr_dict = input_file.iloc[row].to_dict()
+
+    # Exclude clones marked as excluded in the input file
+    excluded_status = str(curr_dict.get('Excluded', '')).strip().lower()
+    if excluded_status == 'yes':
+        continue
+
+    # Exclude clones without a spreadsheet path
+    spreadsheet_path = curr_dict.get('Spreadsheet', np.nan)
+    if pd.isna(spreadsheet_path) or str(spreadsheet_path).strip() == '':
+        continue
+
+    # Add a column with the clone id for each clone in the format S235_a18_c4
+    litter = format_clone_component(curr_dict['Litter'])
+    animal = format_clone_component(curr_dict['Animal'])
+    clone = format_clone_component(curr_dict['Clone'])
+    clone_id = litter + '_' + animal + '_c' + clone
+    animal_id = litter + '_' + animal
+
+    # Format TM timepoint in the same style used elsewhere in this script
+    tm = format_tm(curr_dict.get('TM timepoint', np.nan))
+    tm_amount = curr_dict.get('TM Amount', np.nan)
+
+    spreadsheet_path = str(spreadsheet_path).strip().strip("'").strip('"')
+    print('Loading clone spreadsheet:', clone_id, spreadsheet_path)
+
+    # Read clone spreadsheet directly from the path in input_file
+    if spreadsheet_path.lower().endswith(('.xlsx', '.xls')):
+        clone_cells = pd.read_excel(spreadsheet_path)
+    else:
+        clone_cells = caf.read_csv(spreadsheet_path, skip_rows=0)
+        
+    # Strip leading/trailing whitespace from column names
+    clone_cells.columns = clone_cells.columns.astype(str).str.strip()
+
+    clone_cells = clone_cells.copy()
+    clone_cells['Clone'] = clone_id
+    clone_cells['clone_id'] = clone_id
+    clone_cells['Animal'] = animal_id
+    clone_cells['Litter'] = litter
+    clone_cells['Input animal'] = animal
+    clone_cells['Input clone'] = clone
+    clone_cells['TM'] = tm
+    clone_cells['TM Amount'] = tm_amount
+    clone_cells['Source spreadsheet'] = spreadsheet_path
+    
+    all_clone_cells_df = pd.concat([all_clone_cells_df, clone_cells], ignore_index=True, sort=False)
+
+    curr_log = pd.DataFrame([{
+        'Clone': clone_id,
+        'Animal': animal_id,
+        'TM': tm,
+        'TM Amount': tm_amount,
+        'Spreadsheet': spreadsheet_path,
+        'Loaded': True
+    }])
+    clone_load_log = pd.concat([clone_load_log, curr_log], ignore_index=True)
+
+# Assign cell identities
+all_clone_cells_df = e13id.add_cell_identity_annotations(
+    all_clone_cells_df
+)
+
+# Save the concatenated annotated long-form cell table
+all_clone_cells_output = (
+    tables_output_path
+    + '/E13_all_clone_cells_long_with_identity_'
+    + curr_date
+    + '.csv'
+)
+
+all_clone_cells_df.to_csv(
+    all_clone_cells_output,
+    index=False
+)
+
+# Make a version with all progenitors removed
+all_clone_cells_no_pr_df = all_clone_cells_df[all_clone_cells_df['Glial cell'] != 'pr'].copy()
+
+clone_load_log_output = tables_output_path + '/E13_clone_spreadsheet_load_log_' + curr_date + '.xlsx'
+with pd.ExcelWriter(clone_load_log_output, engine='xlsxwriter') as writer:
+    clone_load_log.to_excel(writer, sheet_name='Load log', index=False)
+
+# Make a wide form table INCLUDING PROGENITORS (copied below to exclude progenitors)
+rg_clones_e13_df = pd.DataFrame()
+
+if not all_clone_cells_df.empty:
+    # These are metadata / annotation columns that should not be converted into marker-count columns
+    # Marker columns to quantify
+    # Exclude metadata columns and any blank Excel columns read as "Unnamed: ..."
+    metadata_cols = [
+        'Litter',
+        'Animal',
+        'Clone',
+        'clone_id',
+        'TM',
+        'TM Amount',
+        'Section',
+        'Cell ID',
+        'Section Cell ID',
+        'Position X',
+        'Position Y',
+        'Position Z',
+        'Colour',
+        'D/V',
+        'D/V to DI4/5 border',
+        'G/W',
+        'Hemisphere',
+        'Damage',
+        'Neuron',
+        'Differentiating Neuron',
+        'MN',
+        'Commissural neuron',
+        'Midline cell',
+        'Glial cell',
+        'Uncertain',
+        'Positive markers',
+        'Assigned cell identity',
+        'Assigned cell colour',      
+        'Input animal',
+        'Input clone',
+        'Source spreadsheet'
+    ]
+
+    marker_cols = []
+
+    for col in all_clone_cells_df.columns:
+        if col in metadata_cols:
+            continue
+        if str(col).startswith('Unnamed:'):
+            continue
+        marker_cols.append(col)
+
+    for clone in all_clone_cells_df['Clone'].dropna().unique():
+        clone_cells = all_clone_cells_df[all_clone_cells_df['Clone'] == clone].copy()
+        first = clone_cells.iloc[0]
+
+        # Positive marker/status entries should contain only 'yes' or 'maybe'
+        if 'Neuron' in clone_cells.columns:
+            neuron_pos = clone_cells['Neuron'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            neuron_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'MN' in clone_cells.columns:
+            mn_pos = clone_cells['MN'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            mn_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Commissural neuron' in clone_cells.columns:
+            comm_pos = clone_cells['Commissural neuron'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+            comm_d_pos = clone_cells['Commissural neuron'].fillna('').astype(str).str.lower().str.strip() == 'd'
+            comm_v_pos = clone_cells['Commissural neuron'].fillna('').astype(str).str.lower().str.strip() == 'v'
+        else:
+            comm_pos = pd.Series(False, index=clone_cells.index)
+            comm_d_pos = pd.Series(False, index=clone_cells.index)
+            comm_v_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Midline cell' in clone_cells.columns:
+            midline_pos = clone_cells['Midline cell'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            midline_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Uncertain' in clone_cells.columns:
+            uncertain_pos = clone_cells['Uncertain'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            uncertain_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Colour' in clone_cells.columns:
+            colour_vals = clone_cells['Colour'].fillna('').astype(str).str.lower().str.strip()
+        else:
+            colour_vals = pd.Series('', index=clone_cells.index)
+
+        if 'Glial cell' in clone_cells.columns:
+            glial_vals = clone_cells['Glial cell'].fillna('').astype(str).str.lower().str.strip()
+        else:
+            glial_vals = pd.Series('', index=clone_cells.index)
+
+        if 'D/V' in clone_cells.columns:
+            dv_vals = set(clone_cells['D/V'].fillna('').astype(str).str.lower().str.strip())
+        else:
+            dv_vals = set()
+        has_dorsal = bool(dv_vals.intersection({'d', 'dorsal'}))
+        has_ventral = bool(dv_vals.intersection({'v', 'ventral'}))
+        if has_dorsal and has_ventral:
+            dv_class = 'Mixed'
+        elif has_dorsal:
+            dv_class = 'Dorsal'
+        elif has_ventral:
+            dv_class = 'Ventral'
+        else:
+            dv_class = np.nan
+
+        if 'Hemisphere' in clone_cells.columns:
+            hemi_vals = set(clone_cells['Hemisphere'].fillna('').astype(str).str.lower().str.strip())
+        else:
+            hemi_vals = set()
+        has_left = bool(hemi_vals.intersection({'l', 'left', 'le'}))
+        has_right = bool(hemi_vals.intersection({'r', 'right', 'ri'}))
+        if has_left and has_right:
+            laterality = 'bi'
+        elif has_left or has_right:
+            laterality = 'uni'
+        else:
+            laterality = np.nan
+
+        # Categorical glial labels are counted by their exact subtype label.
+        # Marker/status columns are counted only when they contain 'yes' or 'maybe'.
+        pa_count = int((glial_vals == 'pa').sum())
+        fa_count = int((glial_vals == 'fa').sum())
+        gl_count = int((glial_vals == 'gl').sum())
+        wf_count = int((glial_vals == 'wf').sum())
+        og_count = int((glial_vals == 'og').sum())
+        ol_count = int((glial_vals == 'ol').sum())
+        pr_count = int((glial_vals == 'pr').sum())
+
+        clone_dict = {
+            'Clone': clone,
+            'Animal': first.get('Animal', np.nan),
+            'Litter': first.get('Litter', np.nan),
+            'Input animal': first.get('Input animal', np.nan),
+            'Input clone': first.get('Input clone', np.nan),
+            'TM': first.get('TM', np.nan),
+            'TM Amount': first.get('TM Amount', np.nan),
+            'Source spreadsheet': first.get('Source spreadsheet', np.nan),
+            'Total cells': int(len(clone_cells)),
+            'Total cells_r': int((colour_vals == 'r').sum()),
+            'Total cells_g': int((colour_vals == 'g').sum()),
+            'Total cells_y': int((colour_vals == 'y').sum()),
+            'Neuron count': int(neuron_pos.sum()),
+            'Neuron count (incl Comm,MN)': int((neuron_pos | mn_pos | comm_pos).sum()),
+            'MN count': int(mn_pos.sum()),
+            'Commissural count_(dv)': int(comm_pos.sum()),
+            'Commissural d count': int(comm_d_pos.sum()),
+            'Commissural v count': int(comm_v_pos.sum()),
+            'Midline count (dv)': int(midline_pos.sum()),
+            'PA count': pa_count,
+            'FA count': fa_count,
+            'GL count': gl_count,
+            'WF count': wf_count,
+            'OG count': og_count,
+            'OL count': ol_count,
+            'PR count': pr_count,
+            'Astrocyte count (PA,FA,GL)': pa_count + fa_count + gl_count,
+            'Glia count (PA,FA,WF,GL,OG,OL)': pa_count + fa_count + wf_count + gl_count + og_count + ol_count,
+            'Progenitor count': pr_count,
+            'Uncertain count': int(uncertain_pos.sum()),
+            'DV': dv_class,
+            'Laterality': laterality,
+        }
+
+        # Count marker-positive cells
+        # Only entries containing "yes" or "maybe" count as positive.
+        marker_pos_df = pd.DataFrame(index=clone_cells.index)
+
+        for marker in marker_cols:
+            if marker in clone_cells.columns:
+                marker_pos = (
+                    clone_cells[marker]
+                    .fillna('')
+                    .astype(str)
+                    .str.lower()
+                    .str.contains('yes|maybe', regex=True)
+                )
+            else:
+                marker_pos = pd.Series(False, index=clone_cells.index)
+
+            marker_pos_df[marker] = marker_pos
+
+            
+        # Classify clone position relative to the D/V to dI4/5 border
+        if 'D/V to DI4/5 border' in clone_cells.columns:
+            dv_border_vals = (
+                clone_cells['D/V to DI4/5 border']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+
+            has_d = dv_border_vals.isin(['d', 'dorsal']).any()
+            has_v = dv_border_vals.isin(['v', 'ventral']).any()
+            has_dv_border = has_d and has_v
+
+        else:
+            # If the clone spreadsheet is missing this column, classify as no D/V border crossing.
+            has_dv_border = False
+
+        has_dorsal_di4_di5 = False
+
+        if 'Lmx1b' in marker_pos_df.columns:
+            has_dorsal_di4_di5 = has_dorsal_di4_di5 or marker_pos_df['Lmx1b'].any()
+
+        if 'Tlx3' in marker_pos_df.columns:
+            has_dorsal_di4_di5 = has_dorsal_di4_di5 or marker_pos_df['Tlx3'].any()
+
+        if 'Lbx1' in marker_pos_df.columns:
+            has_dorsal_di4_di5 = has_dorsal_di4_di5 or marker_pos_df['Lbx1'].any()
+
+        # Sall3 counts only if the Sall3+ cell is not a progenitor
+        if 'Sall3' in marker_pos_df.columns:
+            if 'Glial cell' in clone_cells.columns:
+                glial_vals_for_sall3 = (
+                    clone_cells['Glial cell']
+                    .fillna('')
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
+
+                sall3_non_pr_pos = (
+                    marker_pos_df['Sall3'] &
+                    (glial_vals_for_sall3 != 'pr')
+                )
+
+                has_dorsal_di4_di5 = has_dorsal_di4_di5 or sall3_non_pr_pos.any()
+
+            else:
+                has_dorsal_di4_di5 = has_dorsal_di4_di5 or marker_pos_df['Sall3'].any()
+
+        if has_dv_border:
+            clone_dict['D/V to dI4/5 category'] = 'dv'
+        elif has_dorsal_di4_di5:
+            clone_dict['D/V to dI4/5 category'] = 'd'
+        else:
+            clone_dict['D/V to dI4/5 category'] = 'v'
+
+        # Add left/right hemisphere breakdown columns
+        if 'Hemisphere' in clone_cells.columns:
+            hemi_clean = (
+                clone_cells['Hemisphere']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+
+            left_pos = hemi_clean.isin(['l', 'left', 'le'])
+            right_pos = hemi_clean.isin(['r', 'right', 'ri'])
+        else:
+            left_pos = pd.Series(False, index=clone_cells.index)
+            right_pos = pd.Series(False, index=clone_cells.index)
+
+        hemi_dict = {
+            '_l': left_pos,
+            '_r': right_pos
+        }
+        
+        clone_dict = e13id.add_identity_counts(
+        clone_dict=clone_dict,
+        clone_cells=clone_cells,
+        left_pos=left_pos,
+        right_pos=right_pos,
+    )
+
+        for suffix, hemi_pos in hemi_dict.items():
+
+            # Basic status/count columns
+            clone_dict['Total cells' + suffix] = int(hemi_pos.sum())
+            clone_dict['Total cells_r' + suffix] = int(((colour_vals == 'r') & hemi_pos).sum())
+            clone_dict['Total cells_g' + suffix] = int(((colour_vals == 'g') & hemi_pos).sum())
+            clone_dict['Total cells_y' + suffix] = int(((colour_vals == 'y') & hemi_pos).sum())
+            clone_dict['Neuron count' + suffix] = int((neuron_pos & hemi_pos).sum())
+            clone_dict['Neuron count (incl Comm,MN)' + suffix] = int(((neuron_pos | mn_pos | comm_pos) & hemi_pos).sum())
+            clone_dict['MN count' + suffix] = int((mn_pos & hemi_pos).sum())
+            clone_dict['Commissural count_(dv)' + suffix] = int((comm_pos & hemi_pos).sum())
+            clone_dict['Commissural d count' + suffix] = int((comm_d_pos & hemi_pos).sum())
+            clone_dict['Commissural v count' + suffix] = int((comm_v_pos & hemi_pos).sum())
+            clone_dict['Midline count (dv)' + suffix] = int((midline_pos & hemi_pos).sum())
+
+            # Glial subtype columns
+            clone_dict['PA count' + suffix] = int(((glial_vals == 'pa') & hemi_pos).sum())
+            clone_dict['FA count' + suffix] = int(((glial_vals == 'fa') & hemi_pos).sum())
+            clone_dict['GL count' + suffix] = int(((glial_vals == 'gl') & hemi_pos).sum())
+            clone_dict['WF count' + suffix] = int(((glial_vals == 'wf') & hemi_pos).sum())
+            clone_dict['OG count' + suffix] = int(((glial_vals == 'og') & hemi_pos).sum())
+            clone_dict['OL count' + suffix] = int(((glial_vals == 'ol') & hemi_pos).sum())
+            clone_dict['PR count' + suffix] = int(((glial_vals == 'pr') & hemi_pos).sum())
+
+            clone_dict['Astrocyte count (PA,FA,GL)' + suffix] = (
+                clone_dict['PA count' + suffix] +
+                clone_dict['FA count' + suffix] +
+                clone_dict['GL count' + suffix]
+            )
+
+            clone_dict['Glia count (PA,FA,WF,GL,OG,OL)' + suffix] = (
+                clone_dict['PA count' + suffix] +
+                clone_dict['FA count' + suffix] +
+                clone_dict['WF count' + suffix] +
+                clone_dict['GL count' + suffix] +
+                clone_dict['OG count' + suffix] +
+                clone_dict['OL count' + suffix]
+            )
+
+            clone_dict['Progenitor count' + suffix] = clone_dict['PR count' + suffix]
+            clone_dict['Uncertain count' + suffix] = int((uncertain_pos & hemi_pos).sum())
+
+            # D/V to dI4/5 category per hemisphere
+            hemi_clone_cells = clone_cells[hemi_pos].copy()
+            hemi_marker_pos_df = marker_pos_df[hemi_pos].copy()
+
+            if hemi_clone_cells.shape[0] == 0:
+                clone_dict['D/V to dI4/5 category' + suffix] = np.nan
+
+            else:
+                if 'D/V to DI4/5 border' in hemi_clone_cells.columns:
+                    hemi_dv_border_vals = (
+                        hemi_clone_cells['D/V to DI4/5 border']
+                        .fillna('')
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                    )
+
+                    hemi_has_d = hemi_dv_border_vals.isin(['d', 'dorsal']).any()
+                    hemi_has_v = hemi_dv_border_vals.isin(['v', 'ventral']).any()
+                    hemi_has_dv_border = hemi_has_d and hemi_has_v
+
+                else:
+                    hemi_has_dv_border = False
+
+                hemi_has_dorsal_di4_di5 = False
+
+                if 'Lmx1b' in hemi_marker_pos_df.columns:
+                    hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Lmx1b'].any()
+
+                if 'Tlx3' in hemi_marker_pos_df.columns:
+                    hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Tlx3'].any()
+
+                if 'Lbx1' in hemi_marker_pos_df.columns:
+                    hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Lbx1'].any()
+
+                # Sall3 counts only if Sall3+ cell is not a progenitor
+                if 'Sall3' in hemi_marker_pos_df.columns:
+                    if 'Glial cell' in hemi_clone_cells.columns:
+                        hemi_glial_vals_for_sall3 = (
+                            hemi_clone_cells['Glial cell']
+                            .fillna('')
+                            .astype(str)
+                            .str.strip()
+                            .str.lower()
+                        )
+
+                        hemi_sall3_non_pr_pos = (
+                            hemi_marker_pos_df['Sall3'] &
+                            (hemi_glial_vals_for_sall3 != 'pr')
+                        )
+
+                        hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_sall3_non_pr_pos.any()
+
+                    else:
+                        hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Sall3'].any()
+
+                if hemi_has_dv_border:
+                    clone_dict['D/V to dI4/5 category' + suffix] = 'dv'
+                elif hemi_has_dorsal_di4_di5:
+                    clone_dict['D/V to dI4/5 category' + suffix] = 'd'
+                else:
+                    clone_dict['D/V to dI4/5 category' + suffix] = 'v'
+
+        curr_clone_df = pd.DataFrame([clone_dict])
+        rg_clones_e13_df = pd.concat([rg_clones_e13_df, curr_clone_df], ignore_index=True, sort=False)
+
+    # Add simple clone content/status columns for plotting
+    rg_clones_e13_df['Contains progenitor'] = np.where(rg_clones_e13_df['Progenitor count'] > 0, 'Progenitor-containing', 'No progenitors')
+    rg_clones_e13_df['Contains neuron'] = np.where(rg_clones_e13_df['Neuron count (incl Comm,MN)'] > 0, 'Neuron-containing', 'No neurons')
+    rg_clones_e13_df['Contains glia'] = np.where(rg_clones_e13_df['Glia count (PA,FA,WF,GL,OG,OL)'] > 0, 'Glia-containing', 'No glia')
+
+    clone_content_classes = []
+    for row in range(0, rg_clones_e13_df.shape[0]):
+        curr = rg_clones_e13_df.iloc[row]
+        curr_labels = []
+        if curr['Progenitor count'] > 0:
+            curr_labels.append('Progenitor')
+        if curr['Neuron count (incl Comm,MN)'] > 0:
+            curr_labels.append('Neuron')
+        if curr['Glia count (PA,FA,WF,GL,OG,OL)'] > 0:
+            curr_labels.append('Glia')
+        if len(curr_labels) == 0 and curr['Uncertain count'] > 0:
+            curr_labels.append('Uncertain only')
+        if len(curr_labels) == 0:
+            curr_labels.append('Other/none annotated')
+        clone_content_classes.append('+'.join(curr_labels))
+
+    rg_clones_e13_df['Clone content class'] = clone_content_classes
+
+rg_clones_e13_df = rg_clones_e13_df.merge(rc_level_lookup_df, on="Clone", how="left", validate="many_to_one") # Add a RC level column 
+
+# Combine the original four RC levels into three analysis levels.
+level_map = {'Ce': 'Cervical', 'Th': 'Thoracic', 'Lu': 'Lumbosacral', 'Sa': 'Lumbosacral'}
+rg_clones_e13_df['Level'] = rg_clones_e13_df['RC Level'].map(level_map)
+
+# Save the wide rg_clones-style table
+rg_clones_e13_output = tables_output_path + '/_rg_clones_E13_' + curr_date + '.csv'
+rg_clones_e13_df.to_csv(rg_clones_e13_output, index=False)
+
+### Make a wide form table EXCLUDING PROGENITORS (copied from above to include progenitors)
+rg_clones_e13_no_pr_df = pd.DataFrame()
+
+if not all_clone_cells_df.empty:
+    # These are metadata / annotation columns that should not be converted into marker-count columns
+    # Marker columns to quantify
+    # Exclude metadata columns and any blank Excel columns read as "Unnamed: ..."
+    metadata_cols = [
+        'Litter',
+        'Animal',
+        'Clone',
+        'clone_id',
+        'TM',
+        'TM Amount',
+        'Section',
+        'Cell ID',
+        'Section Cell ID',
+        'Position X',
+        'Position Y',
+        'Position Z',
+        'Colour',
+        'D/V',
+        'D/V to DI4/5 border',
+        'G/W',
+        'Hemisphere',
+        'Damage',
+        'Neuron',
+        'Differentiating Neuron',
+        'MN',
+        'Commissural neuron',
+        'Midline cell',
+        'Glial cell',
+        'Uncertain',
+        'Positive markers',
+        'Assigned cell identity',
+        'Assigned cell colour',      
+        'Input animal',
+        'Input clone',
+        'Source spreadsheet'
+    ]
+
+    marker_cols = []
+
+    for col in all_clone_cells_df.columns:
+        if col in metadata_cols:
+            continue
+        if str(col).startswith('Unnamed:'):
+            continue
+        marker_cols.append(col)
+
+    for clone in all_clone_cells_no_pr_df['Clone'].dropna().unique():
+        clone_cells = all_clone_cells_no_pr_df[all_clone_cells_no_pr_df['Clone'] == clone].copy()
+        first = clone_cells.iloc[0]
+
+        # Positive marker/status entries should contain only 'yes' or 'maybe'
+        if 'Neuron' in clone_cells.columns:
+            neuron_pos = clone_cells['Neuron'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            neuron_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'MN' in clone_cells.columns:
+            mn_pos = clone_cells['MN'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            mn_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Commissural neuron' in clone_cells.columns:
+            comm_pos = clone_cells['Commissural neuron'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+            comm_d_pos = clone_cells['Commissural neuron'].fillna('').astype(str).str.lower().str.strip() == 'd'
+            comm_v_pos = clone_cells['Commissural neuron'].fillna('').astype(str).str.lower().str.strip() == 'v'
+        else:
+            comm_pos = pd.Series(False, index=clone_cells.index)
+            comm_d_pos = pd.Series(False, index=clone_cells.index)
+            comm_v_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Midline cell' in clone_cells.columns:
+            midline_pos = clone_cells['Midline cell'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            midline_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Uncertain' in clone_cells.columns:
+            uncertain_pos = clone_cells['Uncertain'].fillna('').astype(str).str.lower().str.contains('yes|maybe', regex=True)
+        else:
+            uncertain_pos = pd.Series(False, index=clone_cells.index)
+
+        if 'Colour' in clone_cells.columns:
+            colour_vals = clone_cells['Colour'].fillna('').astype(str).str.lower().str.strip()
+        else:
+            colour_vals = pd.Series('', index=clone_cells.index)
+
+        if 'Glial cell' in clone_cells.columns:
+            glial_vals = clone_cells['Glial cell'].fillna('').astype(str).str.lower().str.strip()
+        else:
+            glial_vals = pd.Series('', index=clone_cells.index)
+
+        if 'D/V' in clone_cells.columns:
+            dv_vals = set(clone_cells['D/V'].fillna('').astype(str).str.lower().str.strip())
+        else:
+            dv_vals = set()
+        has_dorsal = bool(dv_vals.intersection({'d', 'dorsal'}))
+        has_ventral = bool(dv_vals.intersection({'v', 'ventral'}))
+        if has_dorsal and has_ventral:
+            dv_class = 'Mixed'
+        elif has_dorsal:
+            dv_class = 'Dorsal'
+        elif has_ventral:
+            dv_class = 'Ventral'
+        else:
+            dv_class = np.nan
+
+        if 'Hemisphere' in clone_cells.columns:
+            hemi_vals = set(clone_cells['Hemisphere'].fillna('').astype(str).str.lower().str.strip())
+        else:
+            hemi_vals = set()
+        has_left = bool(hemi_vals.intersection({'l', 'left', 'le'}))
+        has_right = bool(hemi_vals.intersection({'r', 'right', 'ri'}))
+        if has_left and has_right:
+            laterality = 'bi'
+        elif has_left or has_right:
+            laterality = 'uni'
+        else:
+            laterality = np.nan
+
+        # Categorical glial labels are counted by their exact subtype label.
+        # Marker/status columns are counted only when they contain 'yes' or 'maybe'.
+        pa_count = int((glial_vals == 'pa').sum())
+        fa_count = int((glial_vals == 'fa').sum())
+        gl_count = int((glial_vals == 'gl').sum())
+        wf_count = int((glial_vals == 'wf').sum())
+        og_count = int((glial_vals == 'og').sum())
+        ol_count = int((glial_vals == 'ol').sum())
+        pr_count = int((glial_vals == 'pr').sum())
+
+        clone_dict = {
+            'Clone': clone,
+            'Animal': first.get('Animal', np.nan),
+            'Litter': first.get('Litter', np.nan),
+            'Input animal': first.get('Input animal', np.nan),
+            'Input clone': first.get('Input clone', np.nan),
+            'TM': first.get('TM', np.nan),
+            'TM Amount': first.get('TM Amount', np.nan),
+            'Source spreadsheet': first.get('Source spreadsheet', np.nan),
+            'Total cells': int(len(clone_cells)),
+            'Total cells_r': int((colour_vals == 'r').sum()),
+            'Total cells_g': int((colour_vals == 'g').sum()),
+            'Total cells_y': int((colour_vals == 'y').sum()),
+            'Neuron count': int(neuron_pos.sum()),
+            'Neuron count (incl Comm,MN)': int((neuron_pos | mn_pos | comm_pos).sum()),
+            'MN count': int(mn_pos.sum()),
+            'Commissural count_(dv)': int(comm_pos.sum()),
+            'Commissural d count': int(comm_d_pos.sum()),
+            'Commissural v count': int(comm_v_pos.sum()),
+            'Midline count (dv)': int(midline_pos.sum()),
+            'PA count': pa_count,
+            'FA count': fa_count,
+            'GL count': gl_count,
+            'WF count': wf_count,
+            'OG count': og_count,
+            'OL count': ol_count,
+            'PR count': pr_count,
+            'Astrocyte count (PA,FA,GL)': pa_count + fa_count + gl_count,
+            'Glia count (PA,FA,WF,GL,OG,OL)': pa_count + fa_count + wf_count + gl_count + og_count + ol_count,
+            'Progenitor count': pr_count,
+            'Uncertain count': int(uncertain_pos.sum()),
+            'DV': dv_class,
+            'Laterality': laterality,
+        }
+
+        # Count marker-positive cells
+        # Only entries containing "yes" or "maybe" count as positive.
+        marker_pos_df = pd.DataFrame(index=clone_cells.index)
+
+        for marker in marker_cols:
+            if marker in clone_cells.columns:
+                marker_pos = (
+                    clone_cells[marker]
+                    .fillna('')
+                    .astype(str)
+                    .str.lower()
+                    .str.contains('yes|maybe', regex=True)
+                )
+            else:
+                marker_pos = pd.Series(False, index=clone_cells.index)
+
+            marker_pos_df[marker] = marker_pos
+
+        # Add left/right hemisphere breakdown columns
+        if 'Hemisphere' in clone_cells.columns:
+            hemi_clean = (
+                clone_cells['Hemisphere']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+
+            left_pos = hemi_clean.isin(['l', 'left', 'le'])
+            right_pos = hemi_clean.isin(['r', 'right', 'ri'])
+        else:
+            left_pos = pd.Series(False, index=clone_cells.index)
+            right_pos = pd.Series(False, index=clone_cells.index)
+
+        hemi_dict = {
+            '_l': left_pos,
+            '_r': right_pos
+        }
+
+        clone_dict = e13id.add_identity_counts(
+            clone_dict=clone_dict,
+            clone_cells=clone_cells,
+            left_pos=left_pos,
+            right_pos=right_pos,
+        )
+        
+        for suffix, hemi_pos in hemi_dict.items():
+
+            # Basic status/count columns
+            clone_dict['Total cells' + suffix] = int(hemi_pos.sum())
+            clone_dict['Total cells_r' + suffix] = int(((colour_vals == 'r') & hemi_pos).sum())
+            clone_dict['Total cells_g' + suffix] = int(((colour_vals == 'g') & hemi_pos).sum())
+            clone_dict['Total cells_y' + suffix] = int(((colour_vals == 'y') & hemi_pos).sum())
+            clone_dict['Neuron count' + suffix] = int((neuron_pos & hemi_pos).sum())
+            clone_dict['Neuron count (incl Comm,MN)' + suffix] = int(((neuron_pos | mn_pos | comm_pos) & hemi_pos).sum())
+            clone_dict['MN count' + suffix] = int((mn_pos & hemi_pos).sum())
+            clone_dict['Commissural count_(dv)' + suffix] = int((comm_pos & hemi_pos).sum())
+            clone_dict['Commissural d count' + suffix] = int((comm_d_pos & hemi_pos).sum())
+            clone_dict['Commissural v count' + suffix] = int((comm_v_pos & hemi_pos).sum())
+            clone_dict['Midline count (dv)' + suffix] = int((midline_pos & hemi_pos).sum())
+
+            # Glial subtype columns
+            clone_dict['PA count' + suffix] = int(((glial_vals == 'pa') & hemi_pos).sum())
+            clone_dict['FA count' + suffix] = int(((glial_vals == 'fa') & hemi_pos).sum())
+            clone_dict['GL count' + suffix] = int(((glial_vals == 'gl') & hemi_pos).sum())
+            clone_dict['WF count' + suffix] = int(((glial_vals == 'wf') & hemi_pos).sum())
+            clone_dict['OG count' + suffix] = int(((glial_vals == 'og') & hemi_pos).sum())
+            clone_dict['OL count' + suffix] = int(((glial_vals == 'ol') & hemi_pos).sum())
+            clone_dict['PR count' + suffix] = int(((glial_vals == 'pr') & hemi_pos).sum())
+
+            clone_dict['Astrocyte count (PA,FA,GL)' + suffix] = (
+                clone_dict['PA count' + suffix] +
+                clone_dict['FA count' + suffix] +
+                clone_dict['GL count' + suffix]
+            )
+
+            clone_dict['Glia count (PA,FA,WF,GL,OG,OL)' + suffix] = (
+                clone_dict['PA count' + suffix] +
+                clone_dict['FA count' + suffix] +
+                clone_dict['WF count' + suffix] +
+                clone_dict['GL count' + suffix] +
+                clone_dict['OG count' + suffix] +
+                clone_dict['OL count' + suffix]
+            )
+
+            clone_dict['Progenitor count' + suffix] = clone_dict['PR count' + suffix]
+            clone_dict['Uncertain count' + suffix] = int((uncertain_pos & hemi_pos).sum())
+
+            # D/V to dI4/5 category per hemisphere
+            hemi_clone_cells = clone_cells[hemi_pos].copy()
+            hemi_marker_pos_df = marker_pos_df[hemi_pos].copy()
+
+            if hemi_clone_cells.shape[0] == 0:
+                clone_dict['D/V to dI4/5 category' + suffix] = np.nan
+
+            else:
+                if 'D/V to DI4/5 border' in hemi_clone_cells.columns:
+                    hemi_dv_border_vals = (
+                        hemi_clone_cells['D/V to DI4/5 border']
+                        .fillna('')
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                    )
+
+                    hemi_has_d = hemi_dv_border_vals.isin(['d', 'dorsal']).any()
+                    hemi_has_v = hemi_dv_border_vals.isin(['v', 'ventral']).any()
+                    hemi_has_dv_border = hemi_has_d and hemi_has_v
+
+                else:
+                    hemi_has_dv_border = False
+
+                hemi_has_dorsal_di4_di5 = False
+
+                if 'Lmx1b' in hemi_marker_pos_df.columns:
+                    hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Lmx1b'].any()
+
+                if 'Tlx3' in hemi_marker_pos_df.columns:
+                    hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Tlx3'].any()
+
+                if 'Lbx1' in hemi_marker_pos_df.columns:
+                    hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Lbx1'].any()
+
+                # Sall3 counts only if Sall3+ cell is not a progenitor
+                if 'Sall3' in hemi_marker_pos_df.columns:
+                    if 'Glial cell' in hemi_clone_cells.columns:
+                        hemi_glial_vals_for_sall3 = (
+                            hemi_clone_cells['Glial cell']
+                            .fillna('')
+                            .astype(str)
+                            .str.strip()
+                            .str.lower()
+                        )
+
+                        hemi_sall3_non_pr_pos = (
+                            hemi_marker_pos_df['Sall3'] &
+                            (hemi_glial_vals_for_sall3 != 'pr')
+                        )
+
+                        hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_sall3_non_pr_pos.any()
+
+                    else:
+                        hemi_has_dorsal_di4_di5 = hemi_has_dorsal_di4_di5 or hemi_marker_pos_df['Sall3'].any()
+
+                if hemi_has_dv_border:
+                    clone_dict['D/V to dI4/5 category' + suffix] = 'dv'
+                elif hemi_has_dorsal_di4_di5:
+                    clone_dict['D/V to dI4/5 category' + suffix] = 'd'
+                else:
+                    clone_dict['D/V to dI4/5 category' + suffix] = 'v'
+        
+        curr_clone_df = pd.DataFrame([clone_dict])
+        rg_clones_e13_no_pr_df = pd.concat([rg_clones_e13_no_pr_df, curr_clone_df], ignore_index=True, sort=False)
+
+    # Add simple clone content/status columns for plotting
+    rg_clones_e13_no_pr_df['Contains progenitor'] = np.where(rg_clones_e13_no_pr_df['Progenitor count'] > 0, 'Progenitor-containing', 'No progenitors')
+    rg_clones_e13_no_pr_df['Contains neuron'] = np.where(rg_clones_e13_no_pr_df['Neuron count (incl Comm,MN)'] > 0, 'Neuron-containing', 'No neurons')
+    rg_clones_e13_no_pr_df['Contains glia'] = np.where(rg_clones_e13_no_pr_df['Glia count (PA,FA,WF,GL,OG,OL)'] > 0, 'Glia-containing', 'No glia')
+
+    clone_content_classes = []
+    for row in range(0, rg_clones_e13_no_pr_df.shape[0]):
+        curr = rg_clones_e13_no_pr_df.iloc[row]
+        curr_labels = []
+        if curr['Progenitor count'] > 0:
+            curr_labels.append('Progenitor')
+        if curr['Neuron count (incl Comm,MN)'] > 0:
+            curr_labels.append('Neuron')
+        if curr['Glia count (PA,FA,WF,GL,OG,OL)'] > 0:
+            curr_labels.append('Glia')
+        if len(curr_labels) == 0 and curr['Uncertain count'] > 0:
+            curr_labels.append('Uncertain only')
+        if len(curr_labels) == 0:
+            curr_labels.append('Other/none annotated')
+        clone_content_classes.append('+'.join(curr_labels))
+
+    rg_clones_e13_no_pr_df['Clone content class'] = clone_content_classes
+
+rg_clones_e13_no_pr_df = rg_clones_e13_no_pr_df.merge(rc_level_lookup_df, on="Clone", how="left", validate="many_to_one") # Add a RC level column 
+rg_clones_e13_no_pr_df['Level'] = rg_clones_e13_no_pr_df['RC Level'].map(level_map)
+
+# Save the wide rg_clones-style table
+rg_clones_e13_no_pr_output = tables_output_path + '/_rg_clones_E13_no_pr' + curr_date + '.csv'
+rg_clones_e13_no_pr_df.to_csv(rg_clones_e13_no_pr_output, index=False)
+
+###########################################################################################################################################################################################
+### Plots related to clone size
+
+clone_size_output_path = overall_output_file_path + '/Clone size and composition'
+os.makedirs(clone_size_output_path, exist_ok=True)
+
+### Plot clone size ('Total cells') by TM
+output_path = clone_size_output_path + '/Total_cells_per_clone_' + curr_date
+cap.snsViolinPlot(
+    x_column='TM',
+    y_column='Total cells',
+    df=rg_clones_e13_df,
+    x_axis_title='TM',
+    y_axis_title='Clone size',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.0, 5),
+    order=tm_order,
+    max_y=None
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_e13_df,
+    columns=['Clone', 'TM', 'Total cells'],
+    dep_var='Total cells',
+    ind_vars='TM',
+    output_path=output_path,
+    order=tm_order
+)
+
+
+### Plot clone size ('Total cells') by TM excluding progenitors
+output_path = clone_size_output_path + '/Total_cells_per_clone_no_progenitors' + curr_date
+cap.snsViolinPlot(
+    x_column='TM',
+    y_column='Total cells',
+    df=rg_clones_e13_no_pr_df,
+    x_axis_title='TM',
+    y_axis_title='Clone size',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.0, 5),
+    order=tm_order,
+    max_y=None
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_e13_no_pr_df,
+    columns=['Clone', 'TM', 'Total cells'],
+    dep_var='Total cells',
+    ind_vars='TM',
+    output_path=output_path,
+    order=tm_order
+)
+
+### Plot green hemilineage size by TM
+output_path = clone_size_output_path + '/Total_green_cells_per_clone' + curr_date
+cap.snsViolinPlot(
+    x_column='TM',
+    y_column='Total cells_g',
+    df=rg_clones_e13_df,
+    x_axis_title='TM',
+    y_axis_title='Green hemilineage size',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.0, 5),
+    order=tm_order,
+    max_y=None
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_e13_df,
+    columns=['Clone', 'TM', 'Total cells_g'],
+    dep_var='Total cells_g',
+    ind_vars='TM',
+    output_path=output_path,
+    order=tm_order
+)
+
+### Plot green hemilineage size by TM excluding progenitors
+output_path = clone_size_output_path + '/Total_green_cells_per_clone_no_progenitors' + curr_date
+cap.snsViolinPlot(
+    x_column='TM',
+    y_column='Total cells_g',
+    df=rg_clones_e13_no_pr_df,
+    x_axis_title='TM',
+    y_axis_title='Green hemilineage size',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.0, 5),
+    order=tm_order,
+    max_y=None
+)
+
+saveDataTableGroupMeans(
+    df=rg_clones_e13_no_pr_df,
+    columns=['Clone', 'TM', 'Total cells_g'],
+    dep_var='Total cells_g',
+    ind_vars='TM',
+    output_path=output_path,
+    order=tm_order
+)
+
+### Green vs red cell ratio
+total_g = rg_clones_e13_df['Total cells_g'].sum()
+total_r = rg_clones_e13_df['Total cells_r'].sum()
+num_g_only = (rg_clones_e13_df['Total cells_r'] == 0).sum()
+num_r_only = (rg_clones_e13_df['Total cells_g'] == 0).sum()
+g_vs_r_df = pd.DataFrame(data = {'Total green cells': [total_g], 'Total red cells': [total_r], 'Green-only clones': [num_g_only], 'Proportion green-only clones': [num_g_only / rg_clones_e13_df.shape[0]], 'Proportion red-only clones': [num_r_only / rg_clones_e13_df.shape[0]]})
+g_vs_r_output = tables_output_path + '/g_vs_r_ratio_' + curr_date + '.csv'
+g_vs_r_df.to_csv(g_vs_r_output, index=False)
+
+###########################################################################################################################################################################################
+### Plots related to clone cell-type composition
+
+### Simple plot based on spatial location. Excluding progenitors. Clones with cells only in dI4/5 domain (Sall3/Lmx1b domain), cells only in ventral domain, or confirmed dI4/5s
+### and cells in ventral domain. 
+# Classify clone position relative to the D/V to dI4/5 border
+dv_border_prop_df = caf.cloneTypeProportions(
+    rg_clones_e13_df,
+    ['TM'],
+    ['D/V to dI4/5 category']
+)
+
+dv_border_prop_df['TM'] = pd.Categorical(
+    dv_border_prop_df['TM'],
+    categories=tm_order,
+    ordered=True
+)
+
+dv_border_prop_df = dv_border_prop_df.sort_values('TM').reset_index(drop=True)
+
+print('\ndv_border_prop_df\n', dv_border_prop_df)
+    
+output_path = clone_size_output_path + '/DV_to_dI45_border_categories_' + curr_date
+
+cap.snsStackedBarPlot(
+    data=dv_border_prop_df[dv_border_prop_df['TM'].isin(tm_order)],
+    x='TM',
+    hue='D/V to dI4/5 category',
+    weights='Proportions',
+    x_axis_title='TM',
+    y_axis_title='Proportion of clones',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    palette=ColPals.stckpal_4col,
+    fig_size=(3.2, 5),
+    hue_order=['dv', 'd', 'v']
+)
+
+saveDataTableProps(
+    df1=dv_border_prop_df,
+    df2=rg_clones_e13_df,
+    df2_columns=['Clone', 'TM', 'D/V to dI4/5 category'],
+    group_cols=['TM', 'D/V to dI4/5 category'],
+    output_path=output_path,
+    ind_var='TM',
+    order=tm_order
+)
+
+### Plot clone size, percent identification, and composition. Stacked bar plot where each clone gets its own bar and the colours show marker expression and grey for unidentified cells (with no marker expression).
+### Excludes progenitors. Version that includes progenitors is below
+marker_count_cols = [
+    identity
+    for identity in e13id.CELL_IDENTITY_ORDER_NO_PR 
+    if identity in rg_clones_e13_df.columns
+]
+
+# Keep only marker count columns that actually exist
+marker_count_cols = [col for col in marker_count_cols if col in rg_clones_e13_df.columns]
+
+clone_comp_df = rg_clones_e13_no_pr_df[
+    ['Clone', 'TM', 'Total cells', 'Laterality'] + marker_count_cols
+].copy()
+
+# Turn wide marker-count columns into long-form rows
+clone_comp_prop_df = clone_comp_df.melt(
+    id_vars=['Clone', 'TM', 'Total cells', 'Laterality'],
+    value_vars=marker_count_cols,
+    var_name='Marker',
+    value_name='Count'
+)
+
+print('\nclone_comp_prop_df\n', clone_comp_prop_df)
+
+# Calculate proportion of each clone made up by each marker class
+clone_comp_prop_df['Proportions'] = (
+    clone_comp_prop_df['Count'] / clone_comp_prop_df['Total cells']
+)
+
+# Use the manual clone order imported above and append any clones not in the list
+available_clones = rg_clones_e13_df['Clone'].tolist()
+
+manual_clone_order = [
+    clone for clone in co.CUSTOM_CLONE_ORDER
+    if clone in available_clones
+]
+
+extra_clones = [
+    clone for clone in available_clones
+    if clone not in manual_clone_order
+]
+
+clone_order = manual_clone_order + extra_clones
+
+marker_order = [
+    identity
+    for identity in e13id.CELL_IDENTITY_ORDER_NO_PR
+    if identity in clone_comp_prop_df['Marker'].unique()
+]
+
+marker_palette = {
+    identity: e13id.CELL_IDENTITY_PALETTE_NO_PR[identity]
+    for identity in marker_order
+}
+
+# One TM value per clone, in the same order used for plotting.
+clone_tm_lookup = (
+    rg_clones_e13_no_pr_df[
+        ["Clone", "TM"]
+    ]
+    .drop_duplicates(subset="Clone")
+    .set_index("Clone")["TM"]
+)
+
+tm_order = ['E9.5', 'E10.5']
+
+tm_palette = {
+    'E9.5': ColPals.light_orange,
+    'E10.5': ColPals.med_orange
+}
+
+tm_values = [clone_tm_lookup.get(clone, np.nan) for clone in clone_order]
+
+rc_order = ["Ce", "Th", "Lu", "Sa"]
+
+rc_palette = { # Grey palette
+    "Ce": ColPals.greys[0],
+    "Th": ColPals.greys[1],
+    "Lu": ColPals.greys[2],
+    "Sa": ColPals.greys[3],
+}
+
+clone_rc_lookup = (rg_clones_e13_no_pr_df.drop_duplicates(subset="Clone").set_index("Clone")["RC Level"])
+
+rc_values = [clone_rc_lookup.get(clone, np.nan)for clone in clone_order]
+
+# Proportions
+output_path = clone_size_output_path + '/Clone_marker_composition_prop_no_pr' + curr_date
+cap.snsStackedBarPlot(
+    data=clone_comp_prop_df,
+    x='Clone',
+    hue='Marker',
+    weights='Proportions',
+    x_axis_title='Clone',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=clone_order,
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(max(6, len(clone_order) * 0.35), 5),
+    hue_order=marker_order,
+    rotation = 90, # vertical x labels
+    tm_colourbar = True,
+    tm_values = tm_values, 
+    tm_order = tm_order,
+    tm_palette = tm_palette,
+    rc_colourbar=True,
+    rc_values=rc_values,
+    rc_order=rc_order,
+    rc_palette=rc_palette,
+)
+
+# Counts
+output_path = clone_size_output_path + '/Clone_marker_composition_counts_no_pr' + curr_date
+cap.snsStackedBarPlot(
+    data=clone_comp_prop_df,
+    x='Clone',
+    hue='Marker',
+    weights='Count',
+    x_axis_title='Clone',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=clone_order,
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(max(6, len(clone_order) * 0.35), 5),
+    hue_order=marker_order,
+    rotation = 90 # vertical x labels
+)
+
+### Plot clone size, percent identification, and composition. Stacked bar plot where each clone gets its own bar and the colours show marker expression and grey for unidentified cells (with no marker expression).
+### Includes progenitors. Version that excludes progenitors is below
+marker_count_cols = [
+    identity
+    for identity in e13id.CELL_IDENTITY_ORDER
+    if identity in rg_clones_e13_df.columns
+]
+
+
+clone_comp_df = rg_clones_e13_df[['Clone', 'TM', 'Total cells', 'Laterality'] + marker_count_cols].copy()
+
+# Turn wide marker-count columns into long-form rows
+clone_comp_prop_df = clone_comp_df.melt(
+    id_vars=['Clone', 'TM', 'Total cells', 'Laterality'],
+    value_vars=marker_count_cols,
+    var_name='Marker',
+    value_name='Count'
+)
+
+# Calculate proportion of each clone made up by each marker class
+clone_comp_prop_df['Proportions'] = (
+    clone_comp_prop_df['Count'] / clone_comp_prop_df['Total cells']
+)
+
+# Use the manual clone order imported above and append any clones not in the list
+available_clones = rg_clones_e13_df['Clone'].tolist()
+
+manual_clone_order = [
+    clone for clone in co.CUSTOM_CLONE_ORDER
+    if clone in available_clones
+]
+
+extra_clones = [
+    clone for clone in available_clones
+    if clone not in manual_clone_order
+]
+
+clone_order = manual_clone_order + extra_clones
+
+marker_order = [
+    identity
+    for identity in e13id.CELL_IDENTITY_ORDER
+    if identity in clone_comp_prop_df['Marker'].unique()
+]
+
+marker_palette = {
+    identity: e13id.CELL_IDENTITY_PALETTE[identity]
+    for identity in marker_order
+}
+
+# One TM value per clone, in the same order used for plotting.
+clone_tm_lookup = (
+    rg_clones_e13_df[
+        ["Clone", "TM"]
+    ]
+    .drop_duplicates(subset="Clone")
+    .set_index("Clone")["TM"]
+)
+
+tm_order = ['E9.5', 'E10.5']
+
+tm_palette = {
+    'E9.5': ColPals.light_orange,
+    'E10.5': ColPals.med_orange
+}
+
+tm_values = [clone_tm_lookup.get(clone, np.nan) for clone in clone_order]
+
+# Proportions
+output_path = clone_size_output_path + '/Clone_marker_composition_prop_with_pr' + curr_date
+cap.snsStackedBarPlot(
+    data=clone_comp_prop_df,
+    x='Clone',
+    hue='Marker',
+    weights='Proportions',
+    x_axis_title='Clone',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=clone_order,
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(max(6, len(clone_order) * 0.35), 5),
+    hue_order=marker_order,
+    rotation = 90, # vertical x labels
+    tm_colourbar = True,
+    tm_values = tm_values, 
+    tm_order = tm_order,
+    tm_palette = tm_palette,
+    rc_colourbar=True,
+    rc_values=rc_values,
+    rc_order=rc_order,
+    rc_palette=rc_palette,
+    # Special outline-only categories
+    outline_categories=['Differentiating Neuron','Progenitor',],
+    outline_colours={'Differentiating Neuron': '#286F9E','Progenitor': 'black',},
+    outline_linewidth=1.5,
+)
+
+### Binary heatmap of clone marker composition (excluding progenitors)
+
+binary_heatmap_output_path = clone_size_output_path + '/Clone_marker_binary_heatmap_' + curr_date
+
+# IMPORTANT: Build the heatmap from exactly the same no-progenitor table
+# that is being used for the displayed values. Do not silently take marker
+# names from the progenitor-inclusive table.
+exclude_from_heatmap = ['Progenitor', 'Unidentified cells', 'Differentiating Neuron', 'Inhibitory INs (only Lhx5/Pax2+)']
+binary_marker_order = [
+    m for m in e13id.CELL_IDENTITY_ORDER_NO_PR
+    if m in rg_clones_e13_no_pr_df.columns and m not in exclude_from_heatmap
+]
+binary_clone_order = [
+    c for c in dict.fromkeys(clone_order)
+    if c in set(rg_clones_e13_no_pr_df['Clone'])
+]
+
+if rg_clones_e13_no_pr_df['Clone'].duplicated().any():
+    raise ValueError('Duplicate Clone IDs in rg_clones_e13_no_pr_df; cannot build unique heatmap columns.')
+
+binary_counts_df = (
+    rg_clones_e13_no_pr_df.set_index('Clone')
+    .loc[binary_clone_order, binary_marker_order]
+    .apply(pd.to_numeric, errors='coerce')
+    .fillna(0)
+)
+binary_heatmap_df = binary_counts_df.gt(0).astype(int).T
+binary_heatmap_df.to_csv(binary_heatmap_output_path + '.csv')
+
+# Export count values underlying the binary heatmap as a QC reference.
+binary_counts_df.T.to_csv(binary_heatmap_output_path + '_counts.csv')
+
+# Compare the two suspicious clones in both the full and no-progenitor tables.
+check_clones = ['S235_a15_c10', 'S235_a14_c10']
+if all(c in set(rg_clones_e13_df['Clone']) for c in check_clones):
+    all_markers = [
+        m for m in e13id.CELL_IDENTITY_ORDER
+        if m in rg_clones_e13_df.columns
+    ]
+    full_pair = rg_clones_e13_df.set_index('Clone').loc[check_clones, all_markers].T
+    no_pr_pair = rg_clones_e13_no_pr_df.set_index('Clone').reindex(check_clones)
+    no_pr_pair = no_pr_pair.reindex(columns=binary_marker_order).T
+    comparison = full_pair.join(no_pr_pair, lsuffix=' (with progenitors)', rsuffix=' (without progenitors)', how='outer')
+    comparison.to_csv(binary_heatmap_output_path + '_S235_pair_QC.csv')
+    print('S235 clone QC comparison saved.')
+    if all(c in binary_heatmap_df.columns for c in check_clones):
+        unequal_markers = binary_heatmap_df.index[
+            binary_heatmap_df[check_clones[0]].ne(binary_heatmap_df[check_clones[1]])
+        ].tolist()
+        print('Binary heatmap marker differences between S235 clones:', unequal_markers)
+        if not unequal_markers:
+            print('WARNING: Both clones have the same BINARY pattern for the included, non-progenitor marker classes. Compare the counts/full-source QC CSV.')
+else:
+    print('WARNING: One or both S235 QC clones are missing from the full clone summary.')
+
+# Plot
+fig_w = max(6, len(binary_clone_order) * 0.35)
+fig_h = max(4, len(binary_heatmap_df.index) * 0.35)
+
+fig = plt.figure(
+    figsize=(fig_w, fig_h + 1.0),
+    dpi=150,
+)
+
+grid = fig.add_gridspec(
+    nrows=4,
+    ncols=1,
+    height_ratios=[20, 1, 1, 1],
+    hspace=0.05,
+)
+
+ax = fig.add_subplot(grid[0])
+tm_ax = fig.add_subplot(grid[1], sharex=ax)
+rc_ax = fig.add_subplot(grid[2], sharex=ax)
+lat_ax = fig.add_subplot(grid[3], sharex=ax)
+
+# Binary heat map 
+binary_values = binary_heatmap_df.to_numpy()
+
+# Start with every heatmap cell white
+binary_rgba = np.ones(
+    (
+        binary_values.shape[0],
+        binary_values.shape[1],
+        4,
+    ),
+    dtype=float,
+)
+
+
+# Colour normal marker identities
+for row_index, marker in enumerate(binary_heatmap_df.index):
+
+    marker_colour = to_rgba(marker_palette[marker])
+
+    present_cells = binary_values[row_index] == 1
+
+    binary_rgba[row_index, present_cells, :] = marker_colour
+
+
+# Plot base heatmap
+ax.imshow(
+    binary_rgba,
+    aspect="auto",
+    interpolation="nearest"
+)
+
+
+# Axis labels
+ax.set_xticks(np.arange(binary_heatmap_df.shape[1]))
+ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False) # hide x axis ticks here so they don't get duplicated below
+
+ax.set_yticks(np.arange(binary_heatmap_df.shape[0]))
+ax.set_yticklabels(binary_heatmap_df.index, fontsize=9)
+
+ax.set_ylabel('Marker class', fontweight='bold')
+ax.set_title('Clone marker-class presence (excluding progenitors)')
+
+# Grid lines
+ax.set_xticks(np.arange(-0.5, binary_heatmap_df.shape[1], 1), minor=True)
+ax.set_yticks(np.arange(-0.5, binary_heatmap_df.shape[0], 1), minor=True)
+ax.grid(which='minor', color='lightgrey', linestyle='-', linewidth=0.4)
+ax.tick_params(which='minor', bottom=False, left=False)
+
+# TM annotation strip
+
+x_positions = np.arange(len(binary_clone_order))
+
+for clone_index, tm_value in enumerate(tm_values):
+    tm_colour = tm_palette[tm_value]
+
+    tm_ax.bar(
+        clone_index,
+        1,
+        width=1.0,
+        color=tm_colour,
+        edgecolor="black",
+        linewidth=0.4,
+    )
+
+tm_ax.set_xlim(
+    -0.5,
+    len(binary_clone_order) - 0.5,
+)
+
+tm_ax.set_ylim(0, 1)
+
+tm_ax.set_xticks(x_positions)
+tm_ax.tick_params(axis="x", bottom=False, labelbottom=False)
+
+tm_ax.set_xticklabels(binary_clone_order, rotation=90, fontsize=7)
+
+tm_ax.set_yticks([])
+
+tm_ax.set_xlabel("Clone", fontweight="bold")
+
+tm_ax.set_ylabel("TM", fontweight="bold", rotation=0, labelpad=18, va="center")
+
+for spine in tm_ax.spines.values():
+    spine.set_visible(False)
+
+# TM legend
+
+observed_tm_values = set( tm for tm in tm_values if pd.notna(tm))
+
+tm_legend_handles = [
+    mpl.patches.Patch(
+        facecolor=tm_palette[tm],
+        edgecolor="black",
+        linewidth=0.4,
+        label=str(tm),
+    )
+    for tm in tm_order
+    if tm in observed_tm_values
+]
+
+if any(pd.isna(tm) for tm in tm_values):
+    tm_legend_handles.append(
+        mpl.patches.Patch(
+            facecolor="#BDBDBD",
+            edgecolor="black",
+            linewidth=0.4,
+            label="Missing TM",
+        )
+    )
+
+if tm_legend_handles:
+    tm_ax.legend(
+        handles=tm_legend_handles,
+        title="TM",
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.8),
+        frameon=False,
+        fontsize=8,
+        title_fontsize=9,
+    )
+
+
+# RC colour bar
+
+for clone_index, rc_value in enumerate(rc_values):
+    if pd.isna(rc_value):
+        rc_colour = 'k'
+    else:
+        rc_colour = rc_palette[rc_value]
+
+    rc_ax.bar(
+        clone_index,
+        1,
+        width=1.0,
+        color=rc_colour,
+        edgecolor="black",
+        linewidth=0.4,
+    )
+
+rc_ax.set_xlim(
+    -0.5,
+    len(binary_clone_order) - 0.5,
+)
+
+rc_ax.set_ylim(0, 1)
+
+rc_ax.set_xticks(x_positions)
+
+rc_ax.tick_params(axis="x", bottom=False, labelbottom=False)
+
+rc_ax.set_yticks([])
+
+
+
+rc_ax.set_ylabel(
+    "RC level",
+    fontweight="bold",
+    rotation=0,
+    labelpad=24,
+    va="center",
+)
+
+for spine in rc_ax.spines.values():
+    spine.set_visible(False)
+    
+# RC legend
+observed_rc_values = {
+    rc
+    for rc in rc_values
+    if pd.notna(rc)
+}
+
+rc_legend_handles = [
+    mpl.patches.Patch(
+        facecolor=rc_palette[rc],
+        edgecolor="black",
+        linewidth=0.4,
+        label=str(rc),
+    )
+    for rc in rc_order
+    if rc in observed_rc_values
+]
+
+if any(pd.isna(rc) for rc in rc_values):
+    rc_legend_handles.append(
+        mpl.patches.Patch(
+            facecolor='k',
+            edgecolor="black",
+            linewidth=0.4,
+            label="Missing RC level",
+        )
+    )
+
+if rc_legend_handles:
+    rc_ax.legend(
+        handles=rc_legend_handles,
+        title="RC level",
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.8),
+        frameon=False,
+        fontsize=8,
+        title_fontsize=9,
+    )
+
+# Laterality annotation strip (white = unilateral, purple = bilateral)
+# Align each annotation to the same clone ordering as the heatmap columns.
+lat_lookup = (
+    rg_clones_e13_df.drop_duplicates(subset='Clone')
+    .set_index('Clone')['Laterality']
+)
+lat_values = [lat_lookup.get(clone, np.nan) for clone in binary_clone_order]
+lat_palette = {'uni': '#FFFFFF', 'bi': '#8050A0'}
+
+for clone_index, laterality in enumerate(lat_values):
+    lat_colour = lat_palette.get(laterality, '#BDBDBD')
+    lat_ax.bar(
+        clone_index, 1, width=1.0,
+        color=lat_colour, edgecolor='black', linewidth=0.4,
+    )
+
+lat_ax.set_xlim(-0.5, len(binary_clone_order) - 0.5)
+lat_ax.set_ylim(0, 1)
+lat_ax.set_yticks([])
+lat_ax.set_xticks(x_positions)
+lat_ax.set_xticklabels(binary_clone_order, rotation=90, fontsize=7)
+lat_ax.set_xlabel('Clone', fontweight='bold')
+lat_ax.set_ylabel('Laterality', fontweight='bold', rotation=0,
+                  labelpad=33, va='center')
+for spine in lat_ax.spines.values():
+    spine.set_visible(False)
+
+lat_legend = [
+    mpl.patches.Patch(facecolor='#FFFFFF', edgecolor='black',
+                      linewidth=0.6, label='Unilateral'),
+    mpl.patches.Patch(facecolor='#8050A0', edgecolor='black',
+                      linewidth=0.6, label='Bilateral'),
+]
+if any(pd.isna(value) or value not in lat_palette for value in lat_values):
+    lat_legend.append(mpl.patches.Patch(facecolor='#BDBDBD',
+                       edgecolor='black', label='Missing laterality'))
+lat_ax.legend(handles=lat_legend, title='Laterality',
+              loc='upper left', bbox_to_anchor=(1.01, 1.8),
+              frameon=False, fontsize=8, title_fontsize=9)
+
+fig.savefig(binary_heatmap_output_path + '.png', dpi=300, bbox_inches='tight')
+fig.savefig(binary_heatmap_output_path + '.svg', format='svg', dpi=300, bbox_inches='tight')
+
+plt.close(fig)
+
+### Plot the overall presence of different cardinal classes in the clones
+# Get the overall counts of different markers
+clone_comp_prop_df_no_unidentified = clone_comp_prop_df[clone_comp_prop_df['Marker'] != 'Unidentified cells'].copy() # Copy of df excluding unidentified cells
+marker_tm_prop_df = (clone_comp_prop_df.groupby(['TM', 'Marker'], as_index=False)['Count'].sum())
+marker_tm_prop_df_no_unidentified = (clone_comp_prop_df_no_unidentified.groupby(['TM', 'Marker'], as_index=False)['Count'].sum())
+
+# Get total cells/counts per TM
+tm_totals_df = (marker_tm_prop_df.groupby('TM', as_index=False)['Count'].sum().rename(columns={'Count': 'Total'}))
+tm_totals_df_no_unidentified = (marker_tm_prop_df_no_unidentified.groupby('TM', as_index=False)['Count'].sum().rename(columns={'Count': 'Total'}))
+
+# Merge totals back in
+marker_tm_prop_df = marker_tm_prop_df.merge(tm_totals_df,on='TM',how='left')
+marker_tm_prop_df_no_unidentified = marker_tm_prop_df_no_unidentified.merge(tm_totals_df_no_unidentified,on='TM',how='left')
+
+# Calculate proportion of each marker within each TM
+marker_tm_prop_df['Proportion'] = (marker_tm_prop_df['Count'] / marker_tm_prop_df['Total'])
+marker_tm_prop_df_no_unidentified['Proportion'] = (marker_tm_prop_df_no_unidentified['Count'] / marker_tm_prop_df_no_unidentified['Total'])
+
+print('\nmarker_tm_prop_df\n', marker_tm_prop_df)
+
+# Including unidentified cells
+output_path = clone_size_output_path + '/Overall_marker_composition' + curr_date
+cap.snsStackedBarPlot(
+    data=marker_tm_prop_df,
+    x='TM',
+    hue='Marker',
+    weights='Proportion',
+    x_axis_title='TM',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=['E9.5', 'E10.5'],
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(2.5, 5),
+    hue_order=marker_order,
+)
+    
+saveDataTableProps(df1 = marker_tm_prop_df,
+                   df2 = clone_comp_prop_df, 
+                   df2_columns = ['Clone', 'TM', 'Marker'], 
+                   group_cols = ['TM', 'Marker'], 
+                   output_path = output_path,
+                   ind_var = 'TM', 
+                   order = ['Dorsal', 'Mixed', 'Ventral'])
+
+# Excluding unidentified cells
+output_path = clone_size_output_path + '/Overall_marker_composition_excluding_unidentified' + curr_date
+cap.snsStackedBarPlot(
+    data=marker_tm_prop_df_no_unidentified,
+    x='TM',
+    hue='Marker',
+    weights='Proportion',
+    x_axis_title='TM',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=['E9.5', 'E10.5'],
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(2.5, 5),
+    hue_order=marker_order)
+    
+saveDataTableProps(df1 = marker_tm_prop_df_no_unidentified,
+                   df2 = clone_comp_prop_df_no_unidentified, 
+                   df2_columns = ['Clone', 'TM', 'Marker'], 
+                   group_cols = ['TM', 'Marker'], 
+                   output_path = output_path,
+                   ind_var = 'TM', 
+                   order = ['Dorsal', 'Mixed', 'Ventral'])
+
+# ### Histogram of cell-type composition, excluding uncertain cells and progenitors
+# marker_cols = e13id.CELL_TYPE_HISTOGRAM_LABELS.copy()
+
+# output_path = clone_size_output_path + '/Cell_marker_comp_hist' + curr_date
+# cap.cellTypeHist(rg_clones_e13_no_pr_df, marker_cols, output_path)
+
+# ### Proportion of dI4/5-containing clones that contain dI4-only, dI5-only, or both. Exclude progenitors.
+# di4_di5_df = rg_clones_e13_no_pr_df[
+#     (rg_clones_e13_no_pr_df['dI4 (Sall3+)'] > 0) |
+#     (rg_clones_e13_no_pr_df['dI5 (Lmx1b+)'] > 0) |
+#     (rg_clones_e13_no_pr_df['dI5 (Tlx3+)'] > 0)
+# ].copy()
+# di4_di5_classes = []
+
+# print('\ndi4_di5_df\n', di4_di5_df)
+# for row in range(0, di4_di5_df.shape[0]):
+
+#     curr = di4_di5_df.iloc[row]
+
+#     has_di4 = curr['dI4 (Sall3+)'] > 0
+#     has_di5 = (curr['dI5 (Lmx1b+)'] > 0) or (curr['dI5 (Tlx3+)'] > 0)
+#     has_unid = curr['Unidentified cells'] > 0
+
+#     if has_di5 and has_di4 and has_unid:
+#         di4_di5_class = 'dI4 + dI5 + unidentified'
+#     elif has_di4 and has_di5:
+#         di4_di5_class = 'dI4 + dI5'
+#     elif has_di4 and has_unid:
+#         di4_di5_class = 'dI4 + unidentified'
+#     elif has_di5 and has_unid:
+#         di4_di5_class = 'dI5 + unidentified'
+#     elif has_di4:
+#         di4_di5_class = 'dI4 only'
+#     elif has_di5:
+#         di4_di5_class = 'dI5 only'
+#     else:
+#         di4_di5_class = 'None'
+    
+
+#     di4_di5_classes.append(di4_di5_class)
+
+# di4_di5_df['dI4/dI5 class'] = di4_di5_classes
+
+# di4_di5_prop_df = caf.cloneTypeProportions(di4_di5_df,['TM'],['dI4/dI5 class'])
+
+# di4_di5_prop_df['TM'] = pd.Categorical(di4_di5_prop_df['TM'],categories=tm_order,ordered=True)
+
+# di4_di5_prop_df = di4_di5_prop_df.sort_values('TM').reset_index(drop=True)
+
+# output_path = clone_size_output_path + '/dI4_dI5_clone_classes_' + curr_date
+
+# cap.snsStackedBarPlot(
+#     data=di4_di5_prop_df[di4_di5_prop_df['TM'].isin(tm_order)],
+#     x='TM',
+#     hue='dI4/dI5 class',
+#     weights='Proportions',
+#     x_axis_title='TM',
+#     y_axis_title='Proportion of dI4/dI5 clones',
+#     x_axis_ticks=tm_ticks,
+#     output_path=output_path,
+#     palette=ColPals.spectral,
+#     fig_size=(3.2, 5),
+#     hue_order=['dI4 + dI5', 'dI4 only', 'dI5 only', 'dI4 + unidentified', 'dI5 + unidentified', 'dI4 + dI5 + unidentified', 'None']
+# )
+
+# ### Class mixing vs clone size scatter plot
+# # Create new column in the rg_clones df with the number of classes present (excluding unidentified cells, only-Lbx1+ cells, only Lhx5/Pax+ cells, and progenitors)
+# rg_clones_e13_no_pr_df['dI5 combined'] = ( # Don't double-count dI5s
+#     (rg_clones_e13_no_pr_df['dI5 (Lmx1b+)'].fillna(0) > 0) |
+#     (rg_clones_e13_no_pr_df['dI5 (Tlx3+)'].fillna(0) > 0)
+# )
+
+# cell_class_cols = [
+#     'dI4 (Sall3+)',
+#     'dI5 combined',
+#     'dI1 (Barhl1+)',
+#     'dI2 (FoxD3+En1-)',
+#     'dI3 (dorsal Isl1/2+)',
+#     'dI6 (Dmrt3+)',
+#     'V0 (Evx1+)',
+#     'V1 (En1+)',
+#     'V2a (Chx10+)',
+#     'V2b (Gata3+)',
+#     'V3 (Nkx2.2+)']
+
+# rg_clones_e13_no_pr_df['Number of classes present'] = (
+#     rg_clones_e13_no_pr_df[cell_class_cols]
+#     .fillna(0)
+#     .gt(0)
+#     .sum(axis=1)
+# )
+
+# # Remove clones with only unidentified cells
+# rg_clones_e13_identified_df = rg_clones_e13_no_pr_df[
+#     rg_clones_e13_no_pr_df['Number of classes present'] > 0
+# ].copy()
+
+# output_path = clone_size_output_path + '/Num_classes_vs_clone_size_' + curr_date
+
+# cap.snsScatterPlot(
+#     data=rg_clones_e13_identified_df,
+#     x='Total cells',
+#     y='Number of classes present',
+#     x_axis_title='Clone size',
+#     y_axis_title='Number of classes present',
+#     output_path=output_path,
+#     palette=ColPals.stckpal_2col,
+#     regline=True,
+#     hue=None,
+#     transparent=True,
+#     figsize=(5, 5)
+# )
+
+### Histogram of number of cardinal classes per clone, split by TM
+
+cell_class_cols = [
+    'dI4 (Sall3+)',
+    'dI5 (Lmx1b+ and/or Tlx3+)',
+    'dI1 (Barhl1+)',
+    'dI2 (FoxD3+En1-)',
+    'dI3 (dorsal Isl1/2+)',
+    'dI6 (Dmrt3+)',
+    'V0 (Evx1+)',
+    'V1 (En1+)',
+    'V2a (Chx10+)',
+    'V2b (Gata3+)',
+    'V3 (Nkx2.2+)']
+
+rg_clones_e13_no_pr_df['Number of classes present'] = (
+    rg_clones_e13_no_pr_df[cell_class_cols]
+    .fillna(0)
+    .gt(0)
+    .sum(axis=1)
+)
+
+# Remove clones with only unidentified cells
+rg_clones_e13_identified_df = rg_clones_e13_no_pr_df[
+    rg_clones_e13_no_pr_df['Number of classes present'] > 0].copy()
+
+class_hist_df = rg_clones_e13_identified_df[
+    rg_clones_e13_identified_df['TM'].isin(['E9.5', 'E10.5'])
+].copy()
+
+output_path = (
+    clone_size_output_path
+    + '/Number_cardinal_classes_per_clone_hist_'
+    + curr_date
+)
+
+# Side-by-side TM bars at each integer number of cardinal classes.
+max_classes = int(class_hist_df['Number of classes present'].max())
+class_numbers = np.arange(1, max_classes + 1)
+fig, ax = plt.subplots(figsize=(4.5, 4.5))
+bar_width = 0.38
+
+for tm_index, tm in enumerate(tm_order):
+    values = class_hist_df.loc[
+        class_hist_df['TM'] == tm, 'Number of classes present'
+    ].dropna()
+    if values.empty:
+        continue
+    counts = values.value_counts().reindex(class_numbers, fill_value=0)
+    proportions = counts / len(values)
+    offsets = (-bar_width / 2, bar_width / 2)
+    ax.bar(
+        class_numbers + offsets[tm_index], proportions.to_numpy(),
+        width=bar_width, color=tm_palette[tm],
+        edgecolor=tm_palette[tm], linewidth=0.8,
+        label=f'{tm} (n={len(values)})'
+    )
+
+ax.set_xlabel('Number of cardinal classes present', fontweight='bold')
+ax.set_ylabel('Proportion of clones', fontweight='bold')
+ax.set_xticks(class_numbers)
+ax.set_xlim(0.5, max_classes + 0.5)
+ax.set_ylim(bottom=0)
+ax.legend(frameon=False)
+sns.despine(ax=ax)
+fig.tight_layout()
+fig.savefig(output_path + '.svg', format='svg', bbox_inches='tight')
+fig.savefig(output_path + '.png', dpi=300, bbox_inches='tight')
+plt.close(fig)
+
+# Save the histogram data in a table
+hist_summary_df = (
+    class_hist_df
+    .groupby(
+        ['TM', 'Number of classes present'],
+        observed=True
+    )
+    .size()
+    .reset_index(name='Number of clones')
+)
+
+tm_totals = (
+    hist_summary_df
+    .groupby('TM')['Number of clones']
+    .transform('sum')
+)
+
+hist_summary_df['Proportion of clones'] = (
+    hist_summary_df['Number of clones'] / tm_totals
+)
+
+with pd.ExcelWriter(
+    output_path + '.xlsx',
+    engine='xlsxwriter'
+) as writer:
+
+    class_hist_df[
+        [
+            'Animal',
+            'Clone',
+            'TM',
+            'Total cells',
+            'Number of classes present'
+        ]
+    ].to_excel(
+        writer,
+        sheet_name='Clones',
+        index=False
+    )
+
+    hist_summary_df.to_excel(
+        writer,
+        sheet_name='Histogram summary',
+        index=False
+    )
+    
+### Number of identified cardinal classes per clone, by RC level and TM
+# Same inclusion rule as the histogram: exclude clones with zero identified classes.
+level_order = ['Cervical', 'Thoracic', 'Lumbosacral']
+class_level_df = rg_clones_e13_identified_df.loc[
+    rg_clones_e13_identified_df['Level'].isin(level_order) &
+    rg_clones_e13_identified_df['TM'].isin(tm_order),
+    ['Animal', 'Clone', 'Level', 'RC Level', 'TM', 'Total cells', 'Number of classes present']
+].copy()
+
+class_level_output = clone_size_output_path + '/Number_cardinal_classes_by_level_TM_' + curr_date
+if not class_level_df.empty:
+    cap.snsGroupedViolinPlot(
+        x_column='Level',
+        y_column='Number of classes present',
+        hue_column='TM',
+        df=class_level_df,
+        x_axis_title='Rostrocaudal level',
+        y_axis_title='Number of cardinal classes present',
+        x_axis_ticks=level_order,
+        output_path=class_level_output,
+        palette=[tm_palette[tm] for tm in tm_order],
+        order=level_order,
+        hue_order=tm_order,
+        fig_size=(3.5, 5),
+        max_y=None,
+        legend_title='TM'
+    )
+else:
+    print('WARNING: No identified clones have both a valid RC level and TM for the violin plot.')
+
+with pd.ExcelWriter(class_level_output + '.xlsx', engine='xlsxwriter') as writer:
+    class_level_df.to_excel(writer, sheet_name='Clones', index=False)
+    class_level_df.groupby(['Level', 'TM'], observed=True)['Number of classes present'].agg(
+        N='size', Mean='mean', Median='median', SD='std'
+    ).reset_index().to_excel(writer, sheet_name='Summary', index=False)
+
+### Proportion of progenitor-containing clones
+progenitor_prop_df = caf.cloneTypeProportions(rg_clones_e13_df, ['TM'], ['Contains progenitor'])
+progenitor_prop_df['TM'] = pd.Categorical(progenitor_prop_df['TM'], categories=tm_order, ordered=True)
+progenitor_prop_df = progenitor_prop_df.sort_values('TM').reset_index(drop=True)
+output_path = clone_size_output_path + '/Progenitor_containing_clones_' + curr_date
+cap.snsStackedBarPlot(
+    data=progenitor_prop_df[progenitor_prop_df['TM'].isin(tm_order)],
+    x='TM',
+    hue='Contains progenitor',
+    weights='Proportions',
+    x_axis_title='TM',
+    y_axis_title='Proportion of clones',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    palette=ColPals.stckpal_2col,
+    fig_size=(3.2, 5),
+    hue_order=['Progenitor-containing', 'No progenitors']
+)
+with pd.ExcelWriter(output_path + '.xlsx', engine='xlsxwriter') as writer:
+    rg_clones_e13_df[['Animal', 'Clone', 'TM', 'Contains progenitor', 'Progenitor count']].to_excel(writer, sheet_name='Clones', index=False)
+    progenitor_prop_df.to_excel(writer, sheet_name='Summary', index=False)
+
+# Proportion of neuron-containing clones
+neuron_prop_df = caf.cloneTypeProportions(rg_clones_e13_df, ['TM'], ['Contains neuron'])
+neuron_prop_df['TM'] = pd.Categorical(neuron_prop_df['TM'], categories=tm_order, ordered=True)
+neuron_prop_df = neuron_prop_df.sort_values('TM').reset_index(drop=True)
+output_path = clone_size_output_path + '/Neuron_containing_clones_' + curr_date
+cap.snsStackedBarPlot(
+    data=neuron_prop_df[neuron_prop_df['TM'].isin(tm_order)],
+    x='TM',
+    hue='Contains neuron',
+    weights='Proportions',
+    x_axis_title='TM',
+    y_axis_title='Proportion of clones',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    palette=ColPals.stckpal_2col,
+    fig_size=(3.2, 5),
+    hue_order=['Neuron-containing', 'No neurons']
+)
+with pd.ExcelWriter(output_path + '.xlsx', engine='xlsxwriter') as writer:
+    rg_clones_e13_df[['Animal', 'Clone', 'TM', 'Contains neuron', 'Neuron count (incl Comm,MN)']].to_excel(writer, sheet_name='Clones', index=False)
+    neuron_prop_df.to_excel(writer, sheet_name='Summary', index=False)
+
+# Proportion of glia-containing clones
+glia_prop_df = caf.cloneTypeProportions(rg_clones_e13_df, ['TM'], ['Contains glia'])
+glia_prop_df['TM'] = pd.Categorical(glia_prop_df['TM'], categories=tm_order, ordered=True)
+glia_prop_df = glia_prop_df.sort_values('TM').reset_index(drop=True)
+output_path = clone_size_output_path + '/Glia_containing_clones_' + curr_date
+cap.snsStackedBarPlot(
+    data=glia_prop_df[glia_prop_df['TM'].isin(tm_order)],
+    x='TM',
+    hue='Contains glia',
+    weights='Proportions',
+    x_axis_title='TM',
+    y_axis_title='Proportion of clones',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    palette=ColPals.stckpal_2col,
+    fig_size=(3.2, 5),
+    hue_order=['Glia-containing', 'No glia']
+)
+with pd.ExcelWriter(output_path + '.xlsx', engine='xlsxwriter') as writer:
+    rg_clones_e13_df[['Animal', 'Clone', 'TM', 'Contains glia', 'Glia count (PA,FA,WF,GL,OG,OL)']].to_excel(writer, sheet_name='Clones', index=False)
+    glia_prop_df.to_excel(writer, sheet_name='Summary', index=False)
+
+# Combined clone content classes: progenitor/neuron/glia combinations
+content_order = [
+    'Progenitor',
+    'Neuron',
+    'Glia',
+    'Progenitor+Neuron',
+    'Progenitor+Glia',
+    'Neuron+Glia',
+    'Progenitor+Neuron+Glia',
+    'Uncertain only',
+    'Other/none annotated'
+]
+content_order = [x for x in content_order if x in rg_clones_e13_df['Clone content class'].unique()]
+content_prop_df = caf.cloneTypeProportions(rg_clones_e13_df, ['TM'], ['Clone content class'])
+content_prop_df['TM'] = pd.Categorical(content_prop_df['TM'], categories=tm_order, ordered=True)
+content_prop_df = content_prop_df.sort_values('TM').reset_index(drop=True)
+if len(content_order) <= 4:
+    content_palette = ColPals.stckpal_4col
+else:
+    content_palette = sns.color_palette('tab10', n_colors=len(content_order))
+output_path = clone_size_output_path + '/Clone_content_class_' + curr_date
+cap.snsStackedBarPlot(
+    data=content_prop_df[content_prop_df['TM'].isin(tm_order)],
+    x='TM',
+    hue='Clone content class',
+    weights='Proportions',
+    x_axis_title='TM',
+    y_axis_title='Proportion of clones',
+    x_axis_ticks=tm_ticks,
+    output_path=output_path,
+    palette=content_palette,
+    fig_size=(3.8, 5),
+    hue_order=content_order
+)
+with pd.ExcelWriter(output_path + '.xlsx', engine='xlsxwriter') as writer:
+    rg_clones_e13_df[['Animal', 'Clone', 'TM', 'Clone content class']].to_excel(writer, sheet_name='Clones', index=False)
+    content_prop_df.to_excel(writer, sheet_name='Summary', index=False)
+
+
+###########################################################################################################################################################################################
+### Marker co-expression
+
+coexpression_output_path = overall_output_file_path + '/Marker co-expression'
+os.makedirs(coexpression_output_path, exist_ok=True)
+
+### Co-expression of markers
+# Output a table recording all the instances of marker co-expression (careful, depending on the option you toggle above for "marker_exclusivity",
+# co-expression of Lbx1 or Lhx5/Pax2 may be masked. Excludes progenitors.
+marker_list = ['Sall3', 'Lmx1b', 'Tlx3', 'Lbx1', 'Dmrt3', 'Isl', 'FoxD3', 'En1', 'Gata3', 'Evx1', 'FoxP2', 'Chx10', 'Nkx2.2', 'Lhx5/Pax2']
+
+pos_df = all_clone_cells_df[marker_list].fillna('').astype(str).apply(lambda col: col.str.lower().str.contains('yes|maybe', regex=True))
+
+co_expression_df = all_clone_cells_df[pos_df.sum(axis=1) > 1].copy()
+co_expression_output = coexpression_output_path + '/E13_co-expressing_cells' + curr_date + '.csv'
+co_expression_df.to_csv(co_expression_output, index=False)
+
+### Heatmap of marker co-expression
+# Keep only marker columns that exist in the dataframe
+marker_list_exist = [col for col in marker_list if col in all_clone_cells_df.columns]
+
+# Convert marker columns to True/False
+# A cell is positive if the entry contains "yes"
+marker_pos_df = (
+    all_clone_cells_df[marker_list_exist]
+    .fillna('')
+    .astype(str)
+    .apply(lambda col: col.str.lower().str.contains('yes|maybe', regex=True))
+)
+
+marker_pos_df = marker_pos_df.astype(int)
+
+# Calculate co-expression counts
+coexpression_counts_df = marker_pos_df.T.dot(marker_pos_df)
+
+print('\nCo-expression counts:\n', coexpression_counts_df)
+
+plt.figure(figsize=(8, 7))
+
+sns.heatmap(
+    coexpression_counts_df,
+    annot=True,
+    fmt='d',
+    cmap='viridis',
+    square=True,
+    linewidths=0.5,
+    cbar_kws={'label': 'Number of co-expressing cells'}
+)
+
+plt.title('Marker co-expression frequency')
+plt.xlabel('Marker')
+plt.ylabel('Marker')
+plt.xticks(rotation=90)
+plt.yticks(rotation=0)
+plt.tight_layout()
+
+plt.savefig(coexpression_output_path + '/Marker_coexpression_heatmap_' + curr_date + '.svg', format='svg', dpi=300)
+
+###########################################################################################################################################################################################
+### Plots related to bilaterality
+
+bilaterality_output_path = overall_output_file_path + '/Laterality'
+os.makedirs(bilaterality_output_path, exist_ok=True)
+
+# Frequency of bilateral clones
+bilateral_prop_df = caf.cloneTypeProportions(rg_clones_e13_df, ['TM'], ['Laterality'])
+bilateral_prop_df['TM'] = pd.Categorical(bilateral_prop_df['TM'], categories=tm_order, ordered=True)
+bilateral_prop_df = bilateral_prop_df.sort_values('TM').reset_index(drop=True)
+
+print('\nbilateral_prop_df\n', bilateral_prop_df)
+
+output_path = bilaterality_output_path + '/Bilateral_clone_frequency_' + curr_date
+cap.snsStackedBarPlot(data = bilateral_prop_df[bilateral_prop_df['TM'].isin(['E9.5', 'E10.5', 'E11.5'])], 
+                  x = 'TM', 
+                  hue = 'Laterality',
+                  weights = 'Proportions',
+                  x_axis_title = '',
+                  y_axis_title = 'Proportion of clones',
+                  x_axis_ticks = ['E9.5', 'E10.5'],
+                  output_path = output_path,
+                  palette = ColPals.stckpal_2col,
+                  fig_size = (2.5,5),
+                  hue_order = ['bi', 'uni'])
+
+saveDataTableProps(df1 = bilateral_prop_df,
+                   df2 = rg_clones_e13_df, 
+                   df2_columns = ['Clone', 'TM', 'Laterality'], 
+                   group_cols = ['TM', 'Laterality'], 
+                   output_path = output_path,
+                   ind_var = 'TM', 
+                   order = ['Bilateral', 'Unilateral'])
+
+### Proportion of bilateral clones per rostrocaudal level
+# Denominator is all clones with known laterality ('uni' or 'bi') in each level.
+level_order = ['Cervical', 'Thoracic', 'Lumbosacral']
+level_laterality_df = rg_clones_e13_df.loc[
+    rg_clones_e13_df['Level'].isin(level_order) &
+    rg_clones_e13_df['Laterality'].isin(['uni', 'bi']),
+    ['Animal', 'Clone', 'TM', 'RC Level', 'Level', 'Laterality']
+].copy()
+
+level_bilateral_summary = (
+    level_laterality_df.groupby('Level', observed=True)
+    .agg(
+        Total_clones=('Clone', 'size'),
+        Bilateral_clones=('Laterality', lambda x: int(x.eq('bi').sum())),
+        Animals=('Animal', 'nunique')
+    ).reindex(level_order, fill_value=0).reset_index()
+)
+level_bilateral_summary['Proportion bilateral'] = np.where(
+    level_bilateral_summary['Total_clones'] > 0,
+    level_bilateral_summary['Bilateral_clones'] / level_bilateral_summary['Total_clones'],
+    np.nan
+)
+
+# Plot BOTH laterality categories so bars sum to one at each level.
+# This matches the styling of the existing TM-based laterality plot.
+level_laterality_counts = (
+    level_laterality_df.groupby(['Level', 'Laterality'], observed=True)
+    .size().reset_index(name='Counts')
+)
+level_laterality_counts['Total'] = (
+    level_laterality_counts.groupby('Level', observed=True)['Counts'].transform('sum')
+)
+level_laterality_counts['Proportions'] = (
+    level_laterality_counts['Counts'] / level_laterality_counts['Total']
+)
+level_laterality_counts['Level'] = pd.Categorical(
+    level_laterality_counts['Level'], categories=level_order, ordered=True
+)
+level_laterality_counts = level_laterality_counts.sort_values(
+    ['Level', 'Laterality']
+).reset_index(drop=True)
+
+
+# Calculate binomial standard error for each laterality proportion
+level_laterality_counts['SE'] = np.sqrt(
+    level_laterality_counts['Proportions']
+    * (1 - level_laterality_counts['Proportions'])
+    / level_laterality_counts['Total']
+)
+
+print(
+    level_laterality_counts[
+        ['Level', 'Laterality', 'Proportions', 'SE']
+    ].to_string(index=False)
+)
+
+level_bilateral_output = bilaterality_output_path + '/Bilateral_clone_proportion_by_level_' + curr_date
+if not level_laterality_counts.empty:
+    cap.snsStackedBarPlot(
+        data=level_laterality_counts,
+        x='Level',
+        hue='Laterality',
+        weights='Proportions',
+        x_axis_title='Rostrocaudal level',
+        y_axis_title='Proportion of clones',
+        x_axis_ticks=level_order,
+        output_path=level_bilateral_output,
+        palette={'bi': 'black', 'uni': 'white'},
+        fig_size=(3, 5),
+        hue_order=['bi', 'uni'],
+        outline_categories=['uni'],
+        outline_colours={'uni': 'black'},
+        outline_linewidth=1.2,
+    )
+else:
+    print('WARNING: No clones with a valid level and laterality for the level plot.')
+
+with pd.ExcelWriter(level_bilateral_output + '.xlsx', engine='xlsxwriter') as writer:
+    level_laterality_df.to_excel(writer, sheet_name='Clones', index=False)
+    level_bilateral_summary.to_excel(writer, sheet_name='Summary', index=False)
+    level_laterality_counts.to_excel(writer, sheet_name='Stacked proportions', index=False)
+
+print("\nExcel file saved to:")
+print(level_bilateral_output + '.xlsx')
+
+print("\nColumns in memory:")
+print(level_laterality_counts.columns.tolist())
+
+saved_df = pd.read_excel(
+    level_bilateral_output + '.xlsx',
+    sheet_name='Stacked proportions'
+)
+
+print("\nColumns actually saved:")
+print(saved_df.columns.tolist())
+
+print("\nSaved data:")
+print(saved_df.to_string(index=False))
+
+# Composition of bilateral clones. Excludes progenitors
+marker_cols = e13id.CELL_TYPE_HISTOGRAM_LABELS.copy()
+
+rg_clones_bilat_df = rg_clones_e13_no_pr_df[rg_clones_e13_no_pr_df['Laterality'] == 'bi'].copy()
+output_path = bilaterality_output_path + '/Bilateral_clone_comp' + curr_date
+cap.cellTypeHist(rg_clones_bilat_df, marker_cols, output_path)
+
+### Plot the relative sizes of left and right hemisphere clone fragments
+
+rg_clones_e13_bi_df = rg_clones_e13_df[rg_clones_e13_df['Laterality'] == 'bi']
+# Organize the data for input into a seaborn line graph
+le_list = rg_clones_e13_bi_df['Total cells_l'].tolist()
+ri_list = rg_clones_e13_bi_df['Total cells_r'].tolist()
+frag_size_df = pd.DataFrame({
+    "Left": le_list,
+    "Right": ri_list,
+})
+frag_size_df = frag_size_df.T
+output_path = bilaterality_output_path + '/Bilateral_clone_fragment_size' + curr_date
+
+cap.snsLinePlot(df = frag_size_df,
+            x_axis_title = 'Hemisphere',
+            y_axis_title = 'Number of cells',
+            x_axis_ticks = ['Left', 'Right'],
+            output_path = output_path,
+            palette = [ColPals.purple],
+            fig_size = (3.5,5))
+
+### Size of bilateral clones vs unilateral clones
+output_path = bilaterality_output_path + '/Bilateral_vs_unilateral_clone_size' + curr_date
+cap.snsViolinPlot(
+    x_column='Laterality',
+    y_column='Total cells',
+    df = rg_clones_e13_df[rg_clones_e13_df['TM'].isin(['E9.5', 'E10.5', 'E11.5'])], 
+    x_axis_title='Laterality',
+    y_axis_title='Clone size',
+    x_axis_ticks=['Unilateral', 'Bilateral'],
+    output_path=output_path,
+    colour=ColPals.lightgrey,
+    fig_size=(3.5, 5),
+    order=['uni', 'bi'],      
+    max_y=None)
+
+saveDataTableGroupMeans(df = rg_clones_e13_df,
+              columns = ['Clone', 'Laterality', 'Total cells'],
+              dep_var = 'Total cells', 
+              ind_vars = 'Laterality', 
+              output_path = output_path,
+              order = ['uni', 'bi'])
+
+### Plot the cell-type represetation in bilateral clones
+# Get the overall counts of different markers
+clone_comp_prop_df_bi = clone_comp_prop_df[clone_comp_prop_df['Laterality'] == 'bi'].copy() # only bilateral clones
+clone_comp_prop_df_no_unidentified_bi = clone_comp_prop_df_bi[clone_comp_prop_df_bi['Marker'] != 'Unidentified cells'].copy() # Copy of df excluding unidentified cells
+marker_tm_prop_df_bi = (clone_comp_prop_df_bi.groupby(['TM', 'Marker'], as_index=False)['Count'].sum())
+marker_tm_prop_df_no_unidentified_bi = (clone_comp_prop_df_no_unidentified_bi.groupby(['TM', 'Marker'], as_index=False)['Count'].sum())
+
+# Get total cells/counts per TM
+tm_totals_df = (marker_tm_prop_df_bi.groupby('TM', as_index=False)['Count'].sum().rename(columns={'Count': 'Total'}))
+tm_totals_df_no_unidentified_bi = (marker_tm_prop_df_no_unidentified_bi.groupby('TM', as_index=False)['Count'].sum().rename(columns={'Count': 'Total'}))
+
+# Merge totals back in
+marker_tm_prop_df_bi = marker_tm_prop_df_bi.merge(tm_totals_df,on='TM',how='left')
+marker_tm_prop_df_no_unidentified_bi = marker_tm_prop_df_no_unidentified_bi.merge(tm_totals_df_no_unidentified_bi,on='TM',how='left')
+
+# Calculate proportion of each marker within each TM
+marker_tm_prop_df_bi['Proportion'] = (marker_tm_prop_df_bi['Count'] / marker_tm_prop_df_bi['Total'])
+marker_tm_prop_df_no_unidentified_bi['Proportion'] = (marker_tm_prop_df_no_unidentified_bi['Count'] / marker_tm_prop_df_no_unidentified_bi['Total'])
+
+print('\marker_tm_prop_df_bi\n', marker_tm_prop_df_bi)
+
+# Including unidentified cells
+output_path = bilaterality_output_path + '/Overall_marker_composition_bilateral' + curr_date
+cap.snsStackedBarPlot(
+    data=marker_tm_prop_df_bi,
+    x='TM',
+    hue='Marker',
+    weights='Proportion',
+    x_axis_title='TM',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=['E9.5', 'E10.5'],
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(2.5, 5),
+    hue_order=marker_order)
+    
+saveDataTableProps(df1 = marker_tm_prop_df_bi,
+                   df2 = clone_comp_prop_df_bi, 
+                   df2_columns = ['Clone', 'TM', 'Marker'], 
+                   group_cols = ['TM', 'Marker'], 
+                   output_path = output_path,
+                   ind_var = 'TM', 
+                   order = ['Dorsal', 'Mixed', 'Ventral'])
+
+# Excluding unidentified cells
+output_path = bilaterality_output_path + '/Overall_marker_composition_bilateral_no_unidentified' + curr_date
+cap.snsStackedBarPlot(
+    data=marker_tm_prop_df_no_unidentified_bi,
+    x='TM',
+    hue='Marker',
+    weights='Proportion',
+    x_axis_title='TM',
+    y_axis_title='Proportion of cells',
+    x_axis_ticks=['E9.5', 'E10.5'],
+    output_path=output_path,
+    palette=marker_palette,
+    fig_size=(2.5, 5),
+    hue_order=marker_order)
+    
+saveDataTableProps(df1 = marker_tm_prop_df_no_unidentified_bi,
+                   df2 = clone_comp_prop_df_no_unidentified_bi, 
+                   df2_columns = ['Clone', 'TM', 'Marker'], 
+                   group_cols = ['TM', 'Marker'], 
+                   output_path = output_path,
+                   ind_var = 'TM', 
+                   order = ['Dorsal', 'Mixed', 'Ventral'])
+
+### Binary heatmap of clone marker composition (excluding progenitors) of bilateral clones
+
+binary_heatmap_output_path = bilaterality_output_path + '/Clone_marker_binary_heatmap_' + curr_date
+
+# Use the same marker order as the stacked bar plot
+binary_marker_order = [m for m in marker_order if m in rg_clones_e13_df.columns and m != 'Progenitor']
+
+# Use the same clone order as the stacked bar plot
+binary_clone_order = [c for c in clone_order if c in rg_clones_e13_bi_df['Clone'].tolist()]
+
+# Make clone x marker count table
+binary_heatmap_df = (
+    rg_clones_e13_bi_df
+    .set_index('Clone')
+    .loc[binary_clone_order, binary_marker_order]
+    .fillna(0)
+)
+
+exclude_from_heatmap = [
+    'Unidentified cells',]
+
+binary_heatmap_df = binary_heatmap_df.drop(
+    columns=exclude_from_heatmap,
+    errors='ignore'
+)
+
+# Convert counts to binary presence/absence
+binary_heatmap_df = binary_heatmap_df.gt(0).astype(int)
+
+# Transpose so rows = markers and columns = clones
+binary_heatmap_df = binary_heatmap_df.T
+
+# Save plotted data
+binary_heatmap_df.to_csv(binary_heatmap_output_path + '.csv')
+
+# Plot
+fig_w = max(6, len(binary_clone_order) * 0.35)
+fig_h = max(4, len(binary_marker_order) * 0.35)
+
+fig = plt.figure(
+    figsize=(fig_w, fig_h + 0.7),
+    dpi=150,
+)
+
+grid = fig.add_gridspec(
+    nrows=3,
+    ncols=1,
+    height_ratios=[20, 1, 1],
+    hspace=0.05,
+)
+
+ax = fig.add_subplot(grid[0])
+tm_ax = fig.add_subplot(grid[1], sharex=ax)
+rc_ax = fig.add_subplot(grid[2], sharex=ax)
+
+# Binary heat map 
+binary_values = binary_heatmap_df.to_numpy()
+
+# Start with every heatmap cell white
+binary_rgba = np.ones(
+    (
+        binary_values.shape[0],
+        binary_values.shape[1],
+        4,
+    ),
+    dtype=float,
+)
+
+# Colour normal marker identities
+for row_index, marker in enumerate(binary_heatmap_df.index):
+
+    marker_colour = to_rgba(marker_palette[marker])
+
+    present_cells = binary_values[row_index] == 1
+
+    binary_rgba[row_index, present_cells, :] = marker_colour
+
+
+# Plot base heatmap
+ax.imshow(
+    binary_rgba,
+    aspect="auto",
+    interpolation="nearest"
+)
+
+# Axis labels
+ax.set_xticks(np.arange(binary_heatmap_df.shape[1]))
+ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False) # hide x axis ticks here so they don't get duplicated below
+
+ax.set_yticks(np.arange(binary_heatmap_df.shape[0]))
+ax.set_yticklabels(binary_heatmap_df.index, fontsize=9)
+
+ax.set_ylabel('Marker class', fontweight='bold')
+ax.set_title('Clone marker-class composition\nblack = marker class present in clone')
+
+# Grid lines
+ax.set_xticks(np.arange(-0.5, binary_heatmap_df.shape[1], 1), minor=True)
+ax.set_yticks(np.arange(-0.5, binary_heatmap_df.shape[0], 1), minor=True)
+ax.grid(which='minor', color='lightgrey', linestyle='-', linewidth=0.4)
+ax.tick_params(which='minor', bottom=False, left=False)
+
+# TM annotation strip
+
+x_positions = np.arange(len(binary_clone_order))
+
+for clone_index, tm_value in enumerate(tm_values):
+    tm_colour = tm_palette[tm_value]
+
+    tm_ax.bar(
+        clone_index,
+        1,
+        width=1.0,
+        color=tm_colour,
+        edgecolor="black",
+        linewidth=0.4,
+    )
+
+tm_ax.set_xlim(
+    -0.5,
+    len(binary_clone_order) - 0.5,
+)
+
+tm_ax.set_ylim(0, 1)
+
+tm_ax.set_xticks(x_positions)
+tm_ax.tick_params(axis="x", bottom=False, labelbottom=False)
+
+tm_ax.set_xticklabels(binary_clone_order, rotation=90, fontsize=7)
+
+tm_ax.set_yticks([])
+
+tm_ax.set_xlabel("Clone", fontweight="bold")
+
+tm_ax.set_ylabel("TM", fontweight="bold", rotation=0, labelpad=18, va="center")
+
+for spine in tm_ax.spines.values():
+    spine.set_visible(False)
+
+# TM legend
+
+observed_tm_values = set( tm for tm in tm_values if pd.notna(tm))
+
+tm_legend_handles = [
+    mpl.patches.Patch(
+        facecolor=tm_palette[tm],
+        edgecolor="black",
+        linewidth=0.4,
+        label=str(tm),
+    )
+    for tm in tm_order
+    if tm in observed_tm_values
+]
+
+if any(pd.isna(tm) for tm in tm_values):
+    tm_legend_handles.append(
+        mpl.patches.Patch(
+            facecolor="#BDBDBD",
+            edgecolor="black",
+            linewidth=0.4,
+            label="Missing TM",
+        )
+    )
+
+if tm_legend_handles:
+    tm_ax.legend(
+        handles=tm_legend_handles,
+        title="TM",
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.8),
+        frameon=False,
+        fontsize=8,
+        title_fontsize=9,
+    )
+
+
+# RC colour bar
+
+for clone_index, rc_value in enumerate(rc_values):
+    if pd.isna(rc_value):
+        rc_colour = 'k'
+    else:
+        rc_colour = rc_palette[rc_value]
+
+    rc_ax.bar(
+        clone_index,
+        1,
+        width=1.0,
+        color=rc_colour,
+        edgecolor="black",
+        linewidth=0.4,
+    )
+
+rc_ax.set_xlim(
+    -0.5,
+    len(binary_clone_order) - 0.5,
+)
+
+rc_ax.set_ylim(0, 1)
+
+rc_ax.set_xticks(x_positions)
+
+rc_ax.set_xticklabels(
+    binary_clone_order,
+    rotation=90,
+    fontsize=7,
+)
+
+rc_ax.set_yticks([])
+
+rc_ax.set_xlabel(
+    "Clone",
+    fontweight="bold",
+)
+
+rc_ax.set_ylabel(
+    "RC level",
+    fontweight="bold",
+    rotation=0,
+    labelpad=24,
+    va="center",
+)
+
+for spine in rc_ax.spines.values():
+    spine.set_visible(False)
+    
+# RC legend
+observed_rc_values = {
+    rc
+    for rc in rc_values
+    if pd.notna(rc)
+}
+
+rc_legend_handles = [
+    mpl.patches.Patch(
+        facecolor=rc_palette[rc],
+        edgecolor="black",
+        linewidth=0.4,
+        label=str(rc),
+    )
+    for rc in rc_order
+    if rc in observed_rc_values
+]
+
+if any(pd.isna(rc) for rc in rc_values):
+    rc_legend_handles.append(
+        mpl.patches.Patch(
+            facecolor='k',
+            edgecolor="black",
+            linewidth=0.4,
+            label="Missing RC level",
+        )
+    )
+
+if rc_legend_handles:
+    rc_ax.legend(
+        handles=rc_legend_handles,
+        title="RC level",
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.8),
+        frameon=False,
+        fontsize=8,
+        title_fontsize=9,
+    )
+
+fig.savefig(binary_heatmap_output_path + '.png', dpi=300, bbox_inches='tight')
+fig.savefig(binary_heatmap_output_path + '.svg', format='svg', dpi=300, bbox_inches='tight')
+
+plt.close(fig)
+
+### Bilateral clone hemisphere composition plots
+
+bilat_hemi_output_path = bilaterality_output_path + '/Bilateral hemisphere composition'
+os.makedirs(bilat_hemi_output_path, exist_ok=True)
+
+# Use bilateral clones only
+rg_clones_e13_bi_df = rg_clones_e13_df[rg_clones_e13_df['Laterality'] == 'bi'].copy()
+rg_clones_e13_no_pr_bi_df = rg_clones_e13_no_pr_df[rg_clones_e13_no_pr_df['Laterality'] == 'bi'].copy()
+
+
+### Cell identity in minority vs majority fragments of bilateral clones
+# Minority / majority are defined using the TOTAL number of cells (including
+# progenitors) on the left and right sides of EACH bilateral clone.
+# Composition itself is drawn from the no-progenitor clone table, matching
+# the other E13 identity composition plots. Equal-size fragments are excluded
+# because neither hemisphere can be called the minority.
+
+fragment_sizes = rg_clones_e13_bi_df[
+    ['Clone', 'Total cells_l', 'Total cells_r']
+].copy()
+fragment_sizes['Total cells_l'] = pd.to_numeric(
+    fragment_sizes['Total cells_l'], errors='coerce'
+)
+fragment_sizes['Total cells_r'] = pd.to_numeric(
+    fragment_sizes['Total cells_r'], errors='coerce'
+)
+
+# Avoid inventing a minority for ties or for missing/zero hemisphere counts.
+valid_fragments = (
+    fragment_sizes['Total cells_l'].gt(0)
+    & fragment_sizes['Total cells_r'].gt(0)
+    & fragment_sizes['Total cells_l'].ne(fragment_sizes['Total cells_r'])
+)
+excluded_fragment_sizes = fragment_sizes.loc[~valid_fragments].copy()
+fragment_sizes = fragment_sizes.loc[valid_fragments].copy()
+fragment_sizes['Minority hemisphere'] = np.where(
+    fragment_sizes['Total cells_l'] < fragment_sizes['Total cells_r'],
+    'l', 'r'
+)
+fragment_sizes['Majority hemisphere'] = np.where(
+    fragment_sizes['Total cells_l'] > fragment_sizes['Total cells_r'],
+    'l', 'r'
+)
+
+identity_by_fragment_df = rg_clones_e13_no_pr_bi_df.merge(
+    fragment_sizes[
+        ['Clone', 'Total cells_l', 'Total cells_r',
+         'Minority hemisphere', 'Majority hemisphere']
+    ][['Clone', 'Minority hemisphere', 'Majority hemisphere']],
+    on='Clone', how='inner', validate='one_to_one'
+)
+
+# Use the same labels, order, and colours as the existing E13 identity plots.
+fragment_identity_order = [
+    identity for identity in e13id.CELL_IDENTITY_ORDER_NO_PR
+    if identity + '_l' in identity_by_fragment_df.columns
+    and identity + '_r' in identity_by_fragment_df.columns
+]
+fragment_identity_palette = e13id.CELL_IDENTITY_PALETTE_NO_PR
+fragment_records = []
+for _, clone_row in identity_by_fragment_df.iterrows():
+    for side_type, side_col in [
+        ('Minority', clone_row['Minority hemisphere']),
+        ('Majority', clone_row['Majority hemisphere'])
+    ]:
+        for identity in fragment_identity_order:
+            count = pd.to_numeric(
+                clone_row[identity + '_' + side_col], errors='coerce'
+            )
+            fragment_records.append({
+                'Clone': clone_row['Clone'],
+                'Animal': clone_row['Animal'],
+                'TM': clone_row['TM'],
+                'Fragment': side_type,
+                'Hemisphere': 'Left' if side_col == 'l' else 'Right',
+                'Marker': identity,
+                'Count': 0 if pd.isna(count) else float(count)
+            })
+
+fragment_identity_details_df = pd.DataFrame(fragment_records)
+fragment_summary_cols = ['Fragment', 'Marker', 'Count', 'Total', 'Proportion']
+fragment_identity_summary_df = pd.DataFrame(columns=fragment_summary_cols)
+
+if not fragment_identity_details_df.empty:
+    fragment_identity_summary_df = (
+        fragment_identity_details_df
+        .groupby(['Fragment', 'Marker'], as_index=False, observed=True)['Count']
+        .sum()
+    )
+    fragment_identity_summary_df['Total'] = (
+        fragment_identity_summary_df.groupby('Fragment')['Count'].transform('sum')
+    )
+    fragment_plot_df = fragment_identity_summary_df[
+        fragment_identity_summary_df['Marker'] != 'Unidentified cells'
+    ].copy()
+
+    fragment_plot_df['Total'] = (
+        fragment_plot_df.groupby('Fragment')['Count'].transform('sum')
+    )
+
+    fragment_plot_df['Proportion'] = np.where(
+        fragment_plot_df['Total'] > 0,
+        fragment_plot_df['Count'] / fragment_plot_df['Total'],
+        0.0
+    )
+
+fragment_output_path = (
+    bilat_hemi_output_path + '/Bi_marker_composition_minority_vs_majority_' + curr_date
+)
+
+fragment_identity_summary_df = fragment_identity_summary_df[fragment_identity_summary_df['Marker'] != 'Unidentified cells'].copy()
+
+if not fragment_plot_df.empty and fragment_plot_df['Count'].sum() > 0:
+    # Same plotting function, identity palette, and order as the other E13 plots.
+    # Each bar pools cell counts across clones (not average clone proportions).
+    fragment_order = ['Majority', 'Minority']
+    cap.snsStackedBarPlot(
+        data=fragment_plot_df,
+        x='Fragment',
+        hue='Marker',
+        weights='Proportion',
+        x_axis_title='Bilateral clone fragment',
+        y_axis_title='Proportion of cells',
+        x_axis_ticks=fragment_order,
+        output_path=fragment_output_path,
+        palette=fragment_identity_palette,
+        fig_size=(2, 4.5),
+        hue_order=fragment_identity_order,
+    )
+else:
+    print('No eligible bilateral clone fragments for minority/majority composition plot.')
+
+with pd.ExcelWriter(fragment_output_path + '.xlsx', engine='xlsxwriter') as writer:
+    fragment_identity_details_df.to_excel(writer, sheet_name='Clone identity counts', index=False)
+    fragment_identity_summary_df.to_excel(writer, sheet_name='Pooled proportions', index=False)
+    fragment_sizes.to_excel(writer, sheet_name='Fragment assignments', index=False)
+    excluded_fragment_sizes.to_excel(writer, sheet_name='Excluded ties or missing', index=False)
+
+print('Minority/majority fragment composition:',
+      len(fragment_sizes), 'bilateral clones included,',
+      len(excluded_fragment_sizes), 'excluded (ties or missing sides).')
