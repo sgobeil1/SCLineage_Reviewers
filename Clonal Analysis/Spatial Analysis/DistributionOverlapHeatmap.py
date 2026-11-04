@@ -33,15 +33,16 @@ from scipy.cluster.hierarchy import linkage, leaves_list
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-########################################################################################################################################################################################################
-### User input
+# --------------------------
+# User settings
+# --------------------------
 
-REF_DIR   = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251114 AB Spatial Map\20251114 Lumbar Matt and Giulia Counting\AB Files" # Path of the folder ("AB Files") containing the AB distributions (cell coordinates).
-QUERY_DIR = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251114 AB Spatial Map\20251114 Lumbar Matt and Giulia Counting\AB Files" # Path of the folder containing the distributions you want to compare. If you want to look at the overlap between AB distributions, the path should be the same as the REF_DIR.
+REF_DIR   = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251114 AB Spatial Map\20251114 Lumbar Matt and Giulia Counting\AB Files"
+QUERY_DIR = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251114 AB Spatial Map\20251114 Lumbar Matt and Giulia Counting\AB Files"
 
 now = datetime.datetime.now()
 curr_date = now.strftime("%Y%m%d_%H%M%S")
-OUTPUT_DIR = rf"Z:\People\Sophie\10 AB Spatial Distribution Map\20260113 Clone Spatial Analysis\AB vs AB distribution comparison\Output_HDROverlap_{curr_date}"
+OUTPUT_DIR = rf"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\20260824 Clone Spatial Analysis\AB vs AB distribution comparison\Output_HDROverlap_{curr_date}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Thoracic vs Lumbar scaling (if needed): set to 1/1.49 for T (as in MATLAB), else 1.0
@@ -59,11 +60,22 @@ LEFT_FILES  = []  # list of filename patterns for "forced left"
 RIGHT_FILES = []  # list of filename patterns for "forced right"
 
 AB_ORDER = [
-    'dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)',
-    'dI1 (Barhl1+)', 'dI2 (FoxD3+En1-)', 'dI3 (dorsal Isl+)',
+    'dI1 (Barhl1+)', 
+    'dI2 (FoxD3+En1-)', 
+    'dI3 (dorsal Isl+)',
     'dI3 (Isl+Tlx3+Lbx1-)',
-    'dI6 (Dmrt3+)', 'V0 (Evx1+)', 'V1 (En1+)', 'V1 (En1+FoxD3+)',
-    'V2 (Chx10+)', 'MN (Hb9+)', 'MN (ventral Isl+)', 'V3 (Nkx2.2+)'
+    'dI4 (dorsal Sall3+)',
+    'dI5 (Lbx1+Tlx3+)', 
+    'dI5 (Lmx1b+)', 
+    'dI5 (Tlx3+)',
+    'dI6 (Dmrt3+)', 
+    'V0 (Evx1+)', 
+    'V1 (En1+)', 
+    'V1 (En1+FoxD3+)',
+    'V2 (Chx10+)', 
+    'MN (Hb9+)', 
+    'MN (ventral Isl+)', 
+    'V3 (Nkx2.2+)'
 ]  # desired AB order, top→bottom on heatmap
 
 APPEND_UNLISTED_ABS = True  # if True, ABs not in AB_ORDER are appended at the end
