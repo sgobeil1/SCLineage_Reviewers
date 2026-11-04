@@ -1,0 +1,2925 @@
+from pathlib import Path
+import datetime
+import math
+import sys
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from scipy.io import loadmat
+
+sys.path.append(
+    r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Code Versions\ClonalAnalysis"
+)
+import ClonalAnalysisFunctions_20260126 as caf
+import ColPals as ColPals
+import E13CellIdentity_20261018 as e13id
+from matplotlib.patches import Wedge
+
+
+# -----------------------------------------------------------------------------
+# Paths
+# -----------------------------------------------------------------------------
+INPUT_FILE_PATH = Path(
+    r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Code Versions\E13.5 Clonal Analysis\Input_File_E13_20261015.csv"
+)
+REF_FILE_PATH = Path(
+    r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\20260805_Clone_Ref_E13_complete_v3.csv"
+)
+OUTPUT_ROOT = Path(
+    r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\Plotting"
+)
+
+CORD_CSV_PATH = Path(
+    r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\Code Versions\E13.5 Clonal Analysis\E13cord.csv"
+)
+
+CLONE_OVERVIEW_PATH = Path(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13.5 SamplesOverview_20261018.csv')
+# CORD_MAT_PATH = r"Z:\People\Sophie\3 Code\Matlab Plot Code_Mariano\cord.mat"  # adjust if needed
+
+OUTLINE_PATH = Path(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\Outline_normalized.csv')
+VENTRICLE_PATH = Path(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\Ventricle_normalized.csv')
+VZ_PATH = Path(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\Sox2VZ_normalized.csv')
+FP_PATH = Path(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\FP_normalized.csv')
+RP_PATH = Path(r'Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\E13.5 Clonal Analysis\E13 Cord Outline\RP_normalized.csv')
+
+EXPECTED_REFS = ["CC", "L", "B", "T", "VB", "VT"]
+
+# Do you want unilateral or bilateral plots?
+GENERATE_HEMICORD_PLOTS = True
+GENERATE_BILATERAL_PLOTS = True
+
+# Size of graphing SC (adapted from make_contours_mariano.m script)
+width = 650
+vheight = -450
+dheight = 450
+
+# Keep text editable in Illustrator.
+mpl.rcParams["svg.fonttype"] = "none"
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
+mpl.rcParams["font.family"] = "sans-serif"
+mpl.rcParams["font.sans-serif"] = ["Arial"]
+
+# # -----------------------------------------------------------------------------
+# Reference spinal-cord outline
+# -----------------------------------------------------------------------------
+# def load_scaled_cord_outline(cord_mat_path):
+#     """Load the hemicord outline and map it into the scaled E13 coordinates."""
+#     cord_mat_path = Path(cord_mat_path)
+#     if not cord_mat_path.exists():
+#         raise FileNotFoundError(
+#             f"Reference spinal-cord file not found: {cord_mat_path}"
+#         )
+
+#     mat_data = loadmat(
+#         str(cord_mat_path),
+#         squeeze_me=True,
+#         struct_as_record=False,
+#     )
+#     cord = mat_data.get("cord")
+#     if cord is None:
+#         raise KeyError(f"No variable named 'cord' found in {cord_mat_path}")
+
+#     if hasattr(cord, "x") and hasattr(cord, "y"):
+#         x_raw = cord.x
+#         y_raw = cord.y
+#     elif isinstance(cord, np.ndarray) and cord.dtype.names:
+#         x_raw = cord["x"]
+#         y_raw = cord["y"]
+#     else:
+#         raise ValueError("Unsupported cord.mat structure")
+
+#     def flatten(values):
+#         array = np.asarray(values)
+#         while array.dtype == object and array.size == 1:
+#             array = np.asarray(array.item())
+#         return np.ravel(array).astype(float)
+
+#     cord_x = flatten(x_raw)
+#     cord_y = flatten(y_raw)
+
+#     if len(cord_x) != len(cord_y) or len(cord_x) < 4:
+#         raise ValueError("cord.x and cord.y do not define a valid outline")
+
+#     cord_x_scaled = (cord_x + 1.0) * width
+
+#     cord_y_scaled = vheight + cord_y * (dheight - vheight)
+
+#     return cord_x_scaled, cord_y_scaled
+
+# -----------------------------------------------------------------------------
+# Reference retrieval and clone preparation
+# -----------------------------------------------------------------------------
+def retrieve_clone_references(ref_file, animal_id, clone_id):
+    """Retrieve every reference row belonging to one animal and clone."""
+    return ref_file.loc[
+        (ref_file["Animal"] == animal_id)
+        & (ref_file["Clone"] == clone_id)
+    ].copy()
+
+
+def retrieve_section_references(clone_refs, section):
+    """Retrieve the reference rows belonging to one section of one clone."""
+    return clone_refs.loc[clone_refs["Section"] == section].copy()
+
+
+def references_wide_for_merge(clone_refs):
+    """Convert long reference rows to one row per section for merging."""
+    if clone_refs.empty:
+        return pd.DataFrame(columns=["Section"])
+
+    duplicated = clone_refs.duplicated(subset=["Section", "Ref"], keep=False)
+    if duplicated.any():
+        duplicate_rows = clone_refs.loc[duplicated, ["Section", "Ref"]]
+        raise ValueError(
+            "Duplicate reference labels found within section(s):\n"
+            + duplicate_rows.to_string(index=False)
+        )
+
+    wide = clone_refs.pivot(
+        index="Section",
+        columns="Ref",
+        values=["Position X", "Position Y"],
+    )
+    wide.columns = [
+        f"Ref {ref_label} {coordinate}"
+        for coordinate, ref_label in wide.columns
+    ]
+    return wide.reset_index()
+
+def rotate_section_to_vertical(section_cells, section_refs):
+    """
+    Rotate one section counterclockwise around CC so that the CC-to-VB
+    vector points vertically downward.
+
+    Returns
+    -------
+    rotated_cells : DataFrame
+    rotated_refs : DataFrame
+    rotation_degrees : float
+        Counterclockwise rotation applied, between 0 and 360 degrees.
+    """
+    required_refs = {"CC", "VB"}
+    available_refs = set(
+        section_refs["Ref"].dropna().astype(str).str.strip()
+    )
+
+    missing_refs = required_refs - available_refs
+    if missing_refs:
+        raise ValueError(
+            "Cannot rotate section because it is missing reference(s): "
+            + ", ".join(sorted(missing_refs))
+        )
+
+    cc_row = section_refs.loc[
+        section_refs["Ref"].astype(str).str.strip() == "CC"
+    ].iloc[0]
+
+    vb_row = section_refs.loc[
+        section_refs["Ref"].astype(str).str.strip() == "VB"
+    ].iloc[0]
+
+    cc_x = float(cc_row["Position X"])
+    cc_y = float(cc_row["Position Y"])
+    vb_x = float(vb_row["Position X"])
+    vb_y = float(vb_row["Position Y"])
+
+    # Direction of the original CC -> VB vector.
+    dx = vb_x - cc_x
+    dy = vb_y - cc_y
+
+    if np.isclose(dx, 0) and np.isclose(dy, 0):
+        raise ValueError("CC and VB have identical coordinates.")
+
+    current_angle = np.arctan2(dy, dx)
+
+    # A vertically downward vector has angle -90 degrees.
+    target_angle = -np.pi / 2
+
+    # Express the required rotation as counterclockwise only: 0 to 2*pi.
+    rotation_angle = (target_angle - current_angle) % (2 * np.pi)
+
+    cos_angle = np.cos(rotation_angle)
+    sin_angle = np.sin(rotation_angle)
+
+    def rotate_dataframe(df):
+        rotated = df.copy()
+
+        translated_x = rotated["Position X"].astype(float) - cc_x
+        translated_y = rotated["Position Y"].astype(float) - cc_y
+
+        rotated["Rotated Position X"] = (
+            translated_x * cos_angle
+            - translated_y * sin_angle
+        )
+        rotated["Rotated Position Y"] = (
+            translated_x * sin_angle
+            + translated_y * cos_angle
+        )
+
+        return rotated
+
+    rotated_cells = rotate_dataframe(section_cells)
+    rotated_refs = rotate_dataframe(section_refs)
+
+    rotation_degrees = np.degrees(rotation_angle)
+
+    rotated_cells["Rotation CCW degrees"] = rotation_degrees
+    rotated_refs["Rotation CCW degrees"] = rotation_degrees
+
+    return rotated_cells, rotated_refs, rotation_degrees
+
+def load_reference_SC():
+    """Load already-normalized spinal-cord coordinates."""
+
+    outline = pd.read_csv(OUTLINE_PATH)
+    ventricle = pd.read_csv(VENTRICLE_PATH)
+    vz = pd.read_csv(VZ_PATH)
+    fp = pd.read_csv(FP_PATH)
+    rp = pd.read_csv(RP_PATH)
+
+    # The first four Outline rows are CC, L, B and T landmarks.
+    # They are not sequential vertices of the outline path.
+    if "Is path point" in outline.columns:
+        outline_path = outline.loc[outline["Is path point"].astype(bool)].copy()
+    else:
+        outline_path = outline.iloc[4:].copy()
+
+    return {
+        "outline": outline_path,
+        "ventricle": ventricle,
+        "vz": vz,
+        "fp": fp,
+        "rp": rp
+    }
+    
+def straighten_section_midline(rotated_cells, rotated_refs):
+    """
+    Shift X coordinates as a function of Y so that VT, CC, and VB lie on
+    a perfectly vertical line.
+    """
+    required_refs = {"VT", "CC", "VB"}
+    available_refs = set(
+        rotated_refs["Ref"].dropna().astype(str).str.strip()
+    )
+
+    missing_refs = required_refs - available_refs
+    if missing_refs:
+        raise ValueError(
+            "Cannot straighten section because it is missing reference(s): "
+            + ", ".join(sorted(missing_refs))
+        )
+
+    vt_row = rotated_refs.loc[
+        rotated_refs["Ref"].astype(str).str.strip() == "VT"
+    ].iloc[0]
+
+    cc_row = rotated_refs.loc[
+        rotated_refs["Ref"].astype(str).str.strip() == "CC"
+    ].iloc[0]
+
+    vb_row = rotated_refs.loc[
+        rotated_refs["Ref"].astype(str).str.strip() == "VB"
+    ].iloc[0]
+
+    vt_x = float(vt_row["Rotated Position X"])
+    vt_y = float(vt_row["Rotated Position Y"])
+    cc_x = float(cc_row["Rotated Position X"])
+    cc_y = float(cc_row["Rotated Position Y"])
+    vb_x = float(vb_row["Rotated Position X"])
+    vb_y = float(vb_row["Rotated Position Y"])
+
+    def midline_x(y_values):
+        y_values = np.asarray(y_values, dtype=float)
+        x_values = np.empty_like(y_values, dtype=float)
+
+        above_cc = y_values >= cc_y
+        below_cc = y_values < cc_y
+
+        if np.isclose(vt_y, cc_y):
+            x_values[above_cc] = cc_x
+        else:
+            x_values[above_cc] = cc_x + (
+                (y_values[above_cc] - cc_y) * (vt_x - cc_x) / (vt_y - cc_y)
+            )
+
+        if np.isclose(vb_y, cc_y):
+            x_values[below_cc] = cc_x
+        else:
+            x_values[below_cc] = cc_x + (
+                (y_values[below_cc] - cc_y) * (vb_x - cc_x) / (vb_y - cc_y)
+            )
+
+        return x_values
+
+    straightened_cells = rotated_cells.copy()
+    straightened_refs = rotated_refs.copy()
+
+    cell_midline_x = midline_x(
+        straightened_cells["Rotated Position Y"].astype(float)
+    )
+    ref_midline_x = midline_x(
+        straightened_refs["Rotated Position Y"].astype(float)
+    )
+
+    straightened_cells["Straightened Position X"] = (
+        straightened_cells["Rotated Position X"].astype(float) - cell_midline_x
+    )
+    straightened_cells["Straightened Position Y"] = (
+        straightened_cells["Rotated Position Y"].astype(float)
+    )
+
+    straightened_refs["Straightened Position X"] = (
+        straightened_refs["Rotated Position X"].astype(float) - ref_midline_x
+    )
+    straightened_refs["Straightened Position Y"] = (
+        straightened_refs["Rotated Position Y"].astype(float)
+    )
+
+    return straightened_cells, straightened_refs
+
+
+def calculate_reference_template(ref_file):
+    """Calculate the median target landmark positions for the reference cord."""
+    transformed_reference_sets = []
+
+    for _, section_refs in ref_file.groupby(["Animal", "Clone", "Section"]):
+        section_refs = section_refs.copy()
+        section_refs["Ref"] = section_refs["Ref"].astype(str).str.strip()
+
+        if section_refs["Ref"].duplicated().any():
+            continue
+
+        if not set(EXPECTED_REFS).issubset(set(section_refs["Ref"])):
+            continue
+
+        try:
+            _, rotated_refs, _ = rotate_section_to_vertical(
+                section_cells=section_refs,
+                section_refs=section_refs,
+            )
+            _, straightened_refs = straighten_section_midline(
+                rotated_cells=rotated_refs,
+                rotated_refs=rotated_refs,
+            )
+            transformed_reference_sets.append(straightened_refs)
+        except ValueError:
+            continue
+
+    if not transformed_reference_sets:
+        raise ValueError("Could not calculate a reference spinal cord template.")
+
+    all_transformed_refs = pd.concat(
+        transformed_reference_sets,
+        ignore_index=True,
+    )
+
+    reference_template = all_transformed_refs.groupby("Ref")[[
+        "Straightened Position X",
+        "Straightened Position Y",
+    ]].median()
+
+    return reference_template
+
+
+def scale_section_to_reference(
+    straightened_cells,
+    straightened_refs,
+):
+    """
+    Scale one straightened section using the same lScale, tScale, and
+    bScale calculations as SpotNormScalingRotation.py.
+    """
+    required_refs = {"L", "T", "CC", "B"}
+    available_refs = set(
+        straightened_refs["Ref"].dropna().astype(str).str.strip()
+    )
+
+    missing_refs = required_refs - available_refs
+    if missing_refs:
+        raise ValueError(
+            "Cannot scale section because it is missing reference(s): "
+            + ", ".join(sorted(missing_refs))
+        )
+
+    current_refs = straightened_refs.copy()
+    current_refs["Ref"] = current_refs["Ref"].astype(str).str.strip()
+
+    cc_x = float(
+        current_refs.loc[
+            current_refs["Ref"] == "CC",
+            "Straightened Position X",
+        ].iloc[0]
+    )
+    cc_y = float(
+        current_refs.loc[
+            current_refs["Ref"] == "CC",
+            "Straightened Position Y",
+        ].iloc[0]
+    )
+    l_x = float(
+        current_refs.loc[
+            current_refs["Ref"] == "L",
+            "Straightened Position X",
+        ].iloc[0]
+    )
+    t_y = float(
+        current_refs.loc[
+            current_refs["Ref"] == "T",
+            "Straightened Position Y",
+        ].iloc[0]
+    )
+    b_y = float(
+        current_refs.loc[
+            current_refs["Ref"] == "B",
+            "Straightened Position Y",
+        ].iloc[0]
+    )
+
+    if np.isclose(l_x, cc_x):
+        raise ValueError("L and CC have the same X coordinate, so lScale cannot be calculated.")
+    if np.isclose(t_y, cc_y):
+        raise ValueError("T and CC have the same Y coordinate, so tScale cannot be calculated.")
+    if np.isclose(b_y, cc_y):
+        raise ValueError("B and CC have the same Y coordinate, so bScale cannot be calculated.")
+
+    tScale = dheight / (t_y - cc_y)
+    bScale = vheight / (b_y - cc_y)
+    lScale = width / abs(l_x - cc_x)
+
+    def scale_dataframe(df, use_hemisphere):
+        scaled = df.copy()
+
+        normalized_x = (
+            scaled["Straightened Position X"].astype(float) - cc_x
+        )
+        normalized_y = (
+            scaled["Straightened Position Y"].astype(float) - cc_y
+        )
+
+        scaled_x_distance = np.abs(normalized_x * lScale)
+
+        scaled["Scaled Position X"] = scaled_x_distance
+
+        if use_hemisphere:
+            hemisphere = (
+                scaled["Hemisphere"]
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+
+            hemisphere_sign = hemisphere.map({
+                "l": -1.0,
+                "left": -1.0,
+                "r": 1.0,
+                "right": 1.0,
+            })
+
+            scaled["Scaled Position X Bilateral"] = (
+                scaled_x_distance * hemisphere_sign
+            )
+
+            scaled["Derived hemisphere"] = hemisphere.map({
+                "l": "Left",
+                "left": "Left",
+                "r": "Right",
+                "right": "Right",
+            })
+
+        else:
+            # Reference landmarks are shown on the right hemicord.
+            scaled["Scaled Position X Bilateral"] = scaled_x_distance
+            scaled["Derived hemisphere"] = pd.NA
+
+        scaled["Scaled Position Y"] = normalized_y.apply(
+            lambda y: y * tScale if y > 0 else y * bScale
+        )
+
+        scaled["lScale"] = lScale
+        scaled["tScale"] = tScale
+        scaled["bScale"] = bScale
+
+        return scaled
+
+    scaled_cells = scale_dataframe(
+    straightened_cells,
+    use_hemisphere=True,
+    )
+
+    scaled_refs = scale_dataframe(
+        straightened_refs,
+        use_hemisphere=False,
+    )
+
+    return scaled_cells, scaled_refs
+
+
+def prepare_clone_output(clone_cells, clone_refs, animal_id, clone_id):
+    """Attach section-matched references; do not normalize or scale yet."""
+    required_columns = {"Section", "Position X", "Position Y"}
+    missing_columns = required_columns - set(clone_cells.columns)
+    if missing_columns:
+        raise ValueError(
+            "Clone file is missing required columns: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    cells = clone_cells.copy()
+    cells["Section"] = cells["Section"].astype(str).str.strip()
+
+    # Assignment is safer than DataFrame.insert if one of these columns is
+    # later added to the source clone spreadsheets.
+    cells["Animal"] = animal_id
+    cells["Clone"] = clone_id
+    cells["Clone ID"] = f"{animal_id}_{clone_id}"
+
+    identity_columns = ["Animal", "Clone", "Clone ID"]
+    remaining_columns = [
+        column for column in cells.columns if column not in identity_columns
+    ]
+    cells = cells[identity_columns + remaining_columns]
+
+    refs_wide = references_wide_for_merge(clone_refs)
+    prepared = cells.merge(
+        refs_wide,
+        on="Section",
+        how="left",
+        validate="many_to_one",
+    )
+
+    if "Scaled Position X" in prepared.columns:
+        prepared["Normalized Position X"] = prepared["Scaled Position X"]
+        prepared["Normalized Position Y"] = prepared["Scaled Position Y"]
+    else:
+        prepared["Normalized Position X"] = np.nan
+        prepared["Normalized Position Y"] = np.nan
+    return prepared
+
+
+def audit_clone_references(clone_cells, clone_refs, animal_id, clone_id, clone_path):
+    """Create one reference-matching QC record for a clone."""
+    cell_sections = set(
+        clone_cells["Section"].dropna().astype(str).str.strip()
+    )
+    ref_sections = set(
+        clone_refs["Section"].dropna().astype(str).str.strip()
+    )
+
+    missing_sections = sorted(cell_sections - ref_sections)
+    extra_ref_sections = sorted(ref_sections - cell_sections)
+
+    incomplete_sections = []
+    for section in sorted(cell_sections & ref_sections):
+        section_ref_labels = set(
+            retrieve_section_references(clone_refs, section)["Ref"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+        )
+        missing_labels = sorted(set(EXPECTED_REFS) - section_ref_labels)
+        if missing_labels:
+            incomplete_sections.append(
+                f"{section}: missing {','.join(missing_labels)}"
+            )
+
+    return {
+        "Clone file": str(clone_path),
+        "Animal": animal_id,
+        "Clone": clone_id,
+        "Clone ID": f"{animal_id}_{clone_id}",
+        "Number of cells": len(clone_cells),
+        "Cell sections": "; ".join(sorted(cell_sections)),
+        "Reference sections": "; ".join(sorted(ref_sections)),
+        "Missing reference sections": "; ".join(missing_sections),
+        "Reference-only sections": "; ".join(extra_ref_sections),
+        "Incomplete reference sets": "; ".join(incomplete_sections),
+        "Exact section match": not missing_sections,
+    }
+
+
+# -----------------------------------------------------------------------------
+# Plotting
+# -----------------------------------------------------------------------------
+def draw_multicolour_circle(
+    ax,
+    x,
+    y,
+    colours,
+    radius=10,
+    edgecolor="black",
+    alpha = 0.8,
+    linewidth=0.4,
+    zorder=3,
+):
+    """
+    Draw one circular marker divided into equal coloured sectors.
+
+    Parameters
+    ----------
+    ax : matplotlib axis
+    x, y : float
+        Marker centre in plot/data coordinates.
+    colours : list
+        Colours representing identities present in the clone.
+    radius : float
+        Circle radius in scaled spinal-cord coordinate units.
+    """
+    colours = list(colours)
+
+    if len(colours) == 0:
+        colours = ["lightgrey"]
+
+    if len(colours) == 1:
+        circle = Wedge(
+            center=(x, y),
+            r=radius,
+            theta1=0,
+            theta2=360,
+            alpha = alpha,
+            facecolor=colours[0],
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+            zorder=zorder,
+        )
+        ax.add_patch(circle)
+        return
+
+    sector_size = 360.0 / len(colours)
+
+    for sector_index, colour in enumerate(colours):
+        theta1 = 90 + sector_index * sector_size
+        theta2 = 90 + (sector_index + 1) * sector_size
+
+        sector = Wedge(
+            center=(x, y),
+            r=radius,
+            theta1=theta1,
+            theta2=theta2,
+            alpha = alpha,
+            facecolor=colour,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+            zorder=zorder,
+        )
+
+        ax.add_patch(sector)
+        
+def plot_clone_panel(
+    ax,
+    clone_cells,
+    clone_refs,
+    title,
+    x_column,
+    y_column,
+    cell_colour = 'k',
+    ref_colour = 'b',
+    reference_SC=None,
+    bilateral=False
+):
+    
+    draw_reference_cord(ax, reference_SC)
+
+    ax.scatter(
+        clone_cells[x_column],
+        clone_cells[y_column],
+        s=10,
+        c=cell_colour,
+        alpha=0.75,
+        linewidths=0,
+        label="Cells",
+    )
+
+    if not clone_refs.empty:
+        ax.scatter(
+            clone_refs[x_column],
+            clone_refs[y_column],
+            s=20,
+            c=ref_colour,
+            alpha=0.9,
+            linewidths=0,
+            label="References",
+        )
+    
+        # Draw a line connecting VT -> CC -> VB
+        line_order = ["VT", "CC", "VB"]
+        line_points = []
+
+        for ref_label in line_order:
+            ref_row = clone_refs.loc[
+                clone_refs["Ref"].astype(str).str.strip() == ref_label
+            ]
+
+            if not ref_row.empty:
+                line_points.append(
+                    (
+                        ref_row.iloc[0][x_column],
+                        ref_row.iloc[0][y_column],
+                    )
+                )
+
+        # Only draw the line if VT, CC, and VB are all present
+        if len(line_points) == 3:
+            ax.plot(
+                [point[0] for point in line_points],
+                [point[1] for point in line_points],
+                color="blue",
+                linewidth=1,
+                alpha=0.8,
+            )
+
+        for _, ref_row in clone_refs.iterrows():
+            ax.annotate(
+                f"{ref_row['Section']}:{ref_row['Ref']}",
+                (ref_row[x_column], ref_row[y_column]),
+                xytext=(2, 2),
+                textcoords="offset points",
+                fontsize=5,
+                color="blue",
+            )
+
+    ax.set_title(title, fontsize=8)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.tick_params(labelsize=6, length=2)
+
+
+def save_tiled_clone_figure(
+    plot_records,
+    output_folder,
+    curr_date,
+    x_column,
+    y_column,
+    stage_name,
+    stage_title,
+    cell_colour_column=None,
+    reference_SC=None,
+    bilateral=False
+):
+    """Save one tiled QC figure containing one panel per clone section."""
+    if not plot_records:
+        print("No clone sections were successfully loaded; no tiled plot was created.")
+        return
+
+    n_plots = len(plot_records)
+    n_cols = min(5, max(1, math.ceil(math.sqrt(n_plots))))
+    n_rows = math.ceil(n_plots / n_cols)
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(4.0 * n_cols, 4.0 * n_rows),
+        squeeze=False,
+        constrained_layout=True,
+    )
+        
+    for ax, record in zip(axes.flat, plot_records):
+        status = ""
+        if record["missing_sections"]:
+            status = "\nmissing refs: " + ", ".join(record["missing_sections"])
+
+        if cell_colour_column is None:
+            cell_colours = "k"
+        else:
+            cell_colours = (
+                record["cells"][cell_colour_column]
+                .fillna(e13id.CELL_IDENTITY_PALETTE["Unidentified cells"])
+            )
+
+        plot_clone_panel(
+            ax,
+            record["cells"],
+            record["refs"],
+            f"{record['clone_id']}\nSection: {record['section']}{status}",
+            x_column=x_column,
+            y_column=y_column,
+            cell_colour=cell_colours,
+            reference_SC=reference_SC,
+        )
+
+    for ax in axes.flat[n_plots:]:
+        ax.set_visible(False)
+
+    if cell_colour_column is None:
+        handles, labels = axes.flat[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc="upper right", frameon=False)
+        subtitle = "black = cells; blue = references"
+    else:
+        identity_handles = [
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor=e13id.CELL_IDENTITY_PALETTE[identity],
+            markeredgecolor="none",
+            markersize=6,
+            label=identity,
+        )
+        for identity in e13id.CELL_IDENTITY_ORDER
+        if identity != "Progenitor"
+    ]
+        
+        identity_handles.append(
+            mpl.lines.Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor="blue",
+                markeredgecolor="none",
+                alpha=0.3,
+                markersize=6,
+                label="References",
+            )
+        )
+    
+        identity_handles.append(
+            mpl.lines.Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor="blue",
+                markeredgecolor="none",
+                markersize=6,
+                label="References",
+            )
+        )
+        fig.legend(
+            handles=identity_handles,
+            loc="upper right",
+            bbox_to_anchor=(1.01, 1.0),
+            frameon=False,
+            fontsize=7,
+        )
+        subtitle = "cells = assigned identity colours; blue = references"
+
+    fig.suptitle(
+        f"E13 clone coordinates: {stage_title}\n{subtitle}",
+        fontsize=12,
+    )
+
+    base_path = output_folder / f"All_clones_{stage_name}_{curr_date}"
+    fig.savefig(base_path.with_suffix(".svg"), bbox_inches="tight")
+    # fig.savefig(base_path.with_suffix(".png"), dpi=100, bbox_inches="tight")
+    plt.close(fig)
+
+
+
+def save_tiled_sections_no_references(
+    plot_records, output_folder, curr_date, reference_SC=None,
+    colour_by="rg", bilateral=True, marker_size=22,
+):
+    """One panel per clone SECTION, with no reference points/lines/labels.
+
+    `colour_by` is 'rg' or 'identity'. The reference spinal cord outline is
+    retained, but the section's reference landmarks are never plotted.
+    """
+    if colour_by not in {"rg", "identity"}:
+        raise ValueError("colour_by must be 'rg' or 'identity'")
+    if not plot_records:
+        print("No scaled clone sections to plot.")
+        return
+
+    x_col = get_scaled_x_column(bilateral=bilateral)
+    records = sorted(plot_records, key=lambda r: (r["clone_id"], str(r["section"])))
+    n = len(records)
+    ncols = min(5, max(1, math.ceil(math.sqrt(n))))
+    nrows = math.ceil(n / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4 * ncols, 4 * nrows),
+        squeeze=False, constrained_layout=True,
+    )
+
+    rg_palette = {"r": ColPals.madmred, "g": ColPals.madmgreen}
+    identities_present = set()
+    rg_present = set()
+    for ax, record in zip(axes.flat, records):
+        draw_reference_cord(ax, reference_SC, bilateral=bilateral)
+        cells = record["cells"].copy()
+        if x_col not in cells.columns:
+            raise KeyError(f"Missing {x_col} for {record['clone_id']} / {record['section']}")
+        valid = pd.to_numeric(cells[x_col], errors="coerce").notna() & pd.to_numeric(
+            cells["Scaled Position Y"], errors="coerce").notna()
+        cells = cells.loc[valid]
+        identity = cells["Assigned cell identity"].astype("string").str.strip()
+        progenitor = identity.eq("Progenitor").fillna(False)
+
+        if colour_by == "rg":
+            rg = cells["Colour"].astype("string").str.strip().str.lower()
+            colours = rg.map(rg_palette).fillna("lightgrey")
+            rg_present.update(rg.dropna().tolist())
+            # Match existing R/G figures: progenitors use unfilled circles.
+            fill_mask = ~progenitor
+            if fill_mask.any():
+                ax.scatter(cells.loc[fill_mask, x_col],
+                           cells.loc[fill_mask, "Scaled Position Y"],
+                           s=marker_size, c=colours.loc[fill_mask],
+                           alpha=0.85, edgecolors="none", zorder=3)
+            if progenitor.any():
+                ax.scatter(cells.loc[progenitor, x_col],
+                           cells.loc[progenitor, "Scaled Position Y"],
+                           s=marker_size, facecolors="none",
+                           edgecolors=colours.loc[progenitor],
+                           linewidths=0.8, zorder=4)
+        else:
+            identities_present.update(identity.dropna().tolist())
+            differentiating = identity.eq("Differentiating Neuron").fillna(False)
+            regular = ~(progenitor | differentiating)
+            if regular.any():
+                ax.scatter(cells.loc[regular, x_col],
+                           cells.loc[regular, "Scaled Position Y"],
+                           s=marker_size,
+                           c=cells.loc[regular, "Assigned cell colour"].fillna(
+                               e13id.CELL_IDENTITY_PALETTE["Unidentified cells"]),
+                           alpha=0.85, edgecolors="none", zorder=3)
+            for mask, edge in ((progenitor, "darkgrey"),
+                               (differentiating, "#286F9E")):
+                if mask.any():
+                    ax.scatter(cells.loc[mask, x_col],
+                               cells.loc[mask, "Scaled Position Y"],
+                               s=marker_size, facecolors="none", edgecolors=edge,
+                               linewidths=0.8, zorder=4)
+
+        ax.set_title(f"{record['clone_id']} | Section {record['section']}", fontsize=8)
+        ax.tick_params(labelsize=6, length=2)
+        ax.set_aspect("equal", adjustable="box")
+
+    for ax in axes.flat[n:]:
+        ax.set_visible(False)
+
+    handles = []
+    if colour_by == "rg":
+        for label, colour in rg_palette.items():
+            if label in rg_present:
+                handles.append(mpl.lines.Line2D([0], [0], marker="o", linestyle="",
+                    markerfacecolor=colour, markeredgecolor="none", markersize=6,
+                    label=label))
+        if any(r["cells"]["Assigned cell identity"].astype(str).str.strip().eq(
+                "Progenitor").any() for r in records):
+            handles.append(mpl.lines.Line2D([0], [0], marker="o", linestyle="",
+                markerfacecolor="none", markeredgecolor="grey", markersize=6,
+                label="Progenitor (open circle)"))
+    else:
+        for identity in e13id.CELL_IDENTITY_ORDER:
+            if identity not in identities_present:
+                continue
+            if identity == "Progenitor":
+                face, edge = "none", "darkgrey"
+            elif identity == "Differentiating Neuron":
+                face, edge = "none", "#286F9E"
+            else:
+                face = e13id.CELL_IDENTITY_PALETTE[identity]
+                edge = "none"
+            handles.append(mpl.lines.Line2D([0], [0], marker="o", linestyle="",
+                markerfacecolor=face, markeredgecolor=edge, markersize=6,
+                label=identity))
+
+    if handles:
+        fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(1.005, 1),
+                   frameon=False, fontsize=7)
+    side = "bilateral" if bilateral else "hemicord"
+    fig.suptitle(f"E13 clones: one panel per section | {side} | {colour_by}",
+                 fontsize=12)
+    base = output_folder / f"All_clones_tiled_sections_no_refs_{colour_by}_{side}_{curr_date}"
+    fig.savefig(base.with_suffix(".svg"), bbox_inches="tight")
+    # fig.savefig(base.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {base}")
+
+def save_superimposed_clone_figure(
+    plot_records, output_folder, curr_date, reference_SC=None, bilateral=False,
+    title="All clones superimposed", output_name='All_clones_superimposed',
+    clone_colours=None,
+):
+    """Save one plot with all clones superimposed in different colours."""
+    if not plot_records:
+        print("No clone sections were successfully loaded; no superimposed plot was created.")
+        return
+
+    clone_ids = sorted({
+        record["clone_id"]
+        for record in plot_records
+    })
+
+    # If a global clone-colour mapping is supplied, reuse it so every clone
+    # has the same colour in the all-clones and per-level plots.
+    if clone_colours is None:
+        tab20_colours = list(plt.get_cmap("tab20").colors)
+        clone_colours = {
+            clone_id: tab20_colours[i % len(tab20_colours)]
+            for i, clone_id in enumerate(clone_ids)
+        }
+
+    fig, ax = plt.subplots(
+        figsize=(8, 8),
+        constrained_layout=True,
+    )
+
+    draw_reference_cord(
+        ax,
+        reference_SC,
+        bilateral=bilateral
+    )
+    
+    for clone_id in clone_ids:
+        clone_records = [
+            record for record in plot_records
+            if record["clone_id"] == clone_id
+        ]
+
+        colour = clone_colours[clone_id]
+        first_clone_entry = True
+
+        for record in clone_records:
+            cells = record["cells"]
+            refs = record["refs"]
+
+            cell_x = get_scaled_x_column(bilateral=bilateral)
+            cell_y = "Scaled Position Y"
+
+            ax.scatter(
+                cells[cell_x],
+                cells[cell_y],
+                s=22,
+                c=[colour],
+                alpha=0.8,
+                linewidths=0,
+                label=clone_id if first_clone_entry else None,
+            )
+
+            # if not refs.empty:
+            #     if {"Normalized Position X", "Normalized Position Y"}.issubset(refs.columns):
+            #         ref_x = "Normalized Position X"
+            #         ref_y = "Normalized Position Y"
+            #     elif {"Scaled Position X", "Scaled Position Y"}.issubset(refs.columns):
+            #         ref_x = "Scaled Position X"
+            #         ref_y = "Scaled Position Y"
+            #     elif {"Straightened Position X", "Straightened Position Y"}.issubset(refs.columns):
+            #         ref_x = "Straightened Position X"
+            #         ref_y = "Straightened Position Y"
+            #     else:
+            #         ref_x = "Rotated Position X"
+            #         ref_y = "Rotated Position Y"
+
+            #     ax.scatter(
+            #         refs[ref_x],
+            #         refs[ref_y],
+            #         s=24,
+            #         c=[colour],
+            #         alpha=0.25,
+            #         linewidths=0,
+            #     )
+
+            first_clone_entry = False
+
+    ax.set_title(title, fontsize=12)
+    ax.set_aspect("equal", adjustable="box")
+    ax.tick_params(labelsize=8, length=3)
+
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1),
+        frameon=False,
+        fontsize=7,
+    )
+
+    base_path = output_folder / f"{output_name}_{curr_date}"
+    fig.savefig(base_path.with_suffix(".svg"), bbox_inches="tight")
+    fig.savefig(base_path.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_bilateral_all_clones_overlay(
+    plot_records, output_folder, curr_date, reference_SC=None,
+    colour_by="clone", marker_size=22, marker_alpha=0.85,
+):
+    """All sections and clones on one bilateral cord; colour by clone or RC level."""
+    if not plot_records:
+        print("No scaled records available for bilateral overlay.")
+        return
+    if colour_by not in {"clone", "rc_level"}:
+        raise ValueError("colour_by must be 'clone' or 'rc_level'")
+
+    # Preserve one colour per clone across all its sections.
+    clone_records = {}
+    for record in plot_records:
+        clone_records.setdefault(record["clone_id"], []).append(record)
+    clone_ids = sorted(clone_records)
+
+    if colour_by == "clone":
+        # Use the tab20 palette for the bilateral all-clones-by-clone overlay.
+        # If there are more than 20 clones, the palette cycles.
+        tab20_colours = list(plt.get_cmap("tab20").colors)
+        clone_colours = {
+            clone_id: tab20_colours[i % len(tab20_colours)]
+            for i, clone_id in enumerate(clone_ids)
+        }
+    else:
+        # Four distinguishable colour families; each clone has a different shade.
+        level_cmaps = {
+            "Ce": "Blues", "Th": "Oranges", "Lu": "Greens", "Sa": "Purples"
+        }
+        clone_colours = {}
+        for level, cmap_name in level_cmaps.items():
+            level_clones = [
+                cid for cid in clone_ids
+                if str(clone_records[cid][0].get("RC Level", "")).strip().lower()
+                == level.lower()
+            ]
+            cmap = plt.get_cmap(cmap_name)
+            for i, cid in enumerate(level_clones):
+                # Avoid nearly-white shades that disappear on a white background.
+                shade = 0.42 + 0.50 * (i + 0.5) / max(len(level_clones), 1)
+                clone_colours[cid] = cmap(shade)
+        for cid in clone_ids:
+            if cid not in clone_colours:
+                clone_colours[cid] = "#777777"  # missing/unrecognized RC level
+
+    fig, ax = plt.subplots(figsize=(9, 8), constrained_layout=True)
+    draw_reference_cord(ax, reference_SC, bilateral=True)
+    legend_handles = []
+    for clone_id in clone_ids:
+        cells = pd.concat(
+            [r["cells"] for r in clone_records[clone_id]], ignore_index=True
+        )
+        x_col = get_scaled_x_column(bilateral=True)
+        if x_col not in cells.columns:
+            print(f"WARNING: skipping {clone_id}; missing {x_col}")
+            continue
+        xy = cells[[x_col, "Scaled Position Y"]].apply(
+            pd.to_numeric, errors="coerce"
+        ).dropna()
+        if xy.empty:
+            continue
+        colour = clone_colours[clone_id]
+        ax.scatter(
+            xy[x_col], xy["Scaled Position Y"], s=marker_size,
+            color=colour, alpha=marker_alpha, linewidths=0, zorder=3,
+        )
+        level = str(clone_records[clone_id][0].get("RC Level", "Unknown"))
+        legend_handles.append(mpl.lines.Line2D(
+            [0], [0], marker="o", linestyle="", markersize=6,
+            markerfacecolor=colour, markeredgecolor="none",
+            label=f"{level} | {clone_id}" if colour_by == "rc_level" else clone_id,
+        ))
+
+    ax.set_title(
+        "All clones superimposed — bilateral\n"
+        + ("coloured by clone" if colour_by == "clone"
+           else "coloured by rostrocaudal level (individual clone shades)"),
+        fontsize=12,
+    )
+    ax.set_aspect("equal", adjustable="box")
+    ax.tick_params(labelsize=8, length=3)
+    if legend_handles:
+        ax.legend(handles=legend_handles, loc="upper left",
+                  bbox_to_anchor=(1.02, 1), frameon=False, fontsize=7,
+                  ncol=1 if len(legend_handles) < 45 else 2)
+    base_path = output_folder / f"All_clones_bilateral_by_{colour_by}_{curr_date}"
+    fig.savefig(base_path.with_suffix(".svg"), bbox_inches="tight")
+    fig.savefig(base_path.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved bilateral {colour_by} overlay: {base_path}")
+
+
+def save_superimposed_identity_figure(
+    plot_records,
+    output_folder,
+    curr_date,
+    reference_SC=None,
+    bilateral=False,
+):
+    """Save one scaled overlay with cells coloured by assigned identity."""
+    if not plot_records:
+        print(
+            "No clone sections were successfully loaded; "
+            "no identity-coloured overlay was created."
+        )
+        return
+
+    fig, ax = plt.subplots(
+        figsize=(8, 8),
+        constrained_layout=True,
+    )
+
+    # Draw the reference spinal cord behind the cells.
+    draw_reference_cord(ax, reference_SC)
+
+    for record in plot_records:
+        cells = record["cells"]
+        refs = record["refs"]
+
+        # Separate progenitors from differentiated cells.
+        assigned_identity = (
+            cells["Assigned cell identity"]
+            .astype(str)
+            .str.strip()
+        )
+
+        is_progenitor = assigned_identity.eq("Progenitor")
+        is_differentiating = assigned_identity.eq("Differentiating Neuron")
+
+        regular_cells = cells.loc[
+            ~(is_progenitor | is_differentiating)
+        ]
+
+        progenitor_cells = cells.loc[is_progenitor]
+        differentiating_cells = cells.loc[is_differentiating]
+
+        # Plot regular differentiated cells using their assigned identity colours.
+        if not regular_cells.empty:
+            ax.scatter(
+                regular_cells["Scaled Position X"],
+                regular_cells["Scaled Position Y"],
+                s=22,
+                c=regular_cells["Assigned cell colour"].fillna(
+                    e13id.CELL_IDENTITY_PALETTE["Unidentified cells"]
+                ),
+                alpha=0.85,
+                edgecolors="none",
+                linewidths=0,
+                zorder=2,
+            )
+
+        # Plot progenitors as empty circles.
+        if not progenitor_cells.empty:
+            ax.scatter(
+                progenitor_cells["Scaled Position X"],
+                progenitor_cells["Scaled Position Y"],
+                s=22,
+                facecolors="none",
+                edgecolors="darkgrey",
+                linewidths=0.8,
+                alpha=1.0,
+                zorder=4,
+            )
+            
+        if not differentiating_cells.empty:
+            ax.scatter(
+                differentiating_cells["Scaled Position X"],
+                differentiating_cells["Scaled Position Y"],
+                s=22,
+                facecolors="none",
+                edgecolors="#286F9E",
+                linewidths=0.8,
+                alpha=1.0,
+                zorder=4,
+            )
+
+        # if not refs.empty:
+        #     ax.scatter(
+        #         refs["Scaled Position X"],
+        #         refs["Scaled Position Y"],
+        #         s=24,
+        #         c="blue",
+        #         alpha=0.15,
+        #         linewidths=0,
+        #         zorder=3,
+        #     )
+
+    identity_handles = [
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor=e13id.CELL_IDENTITY_PALETTE[identity],
+            markeredgecolor="none",
+            markersize=6,
+            label=identity,
+        )
+        for identity in e13id.CELL_IDENTITY_ORDER
+        if identity != "Progenitor"
+    ]
+
+    identity_handles.append(
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="blue",
+            markeredgecolor="none",
+            alpha=0.3,
+            markersize=6,
+            label="References",
+        )
+    )
+
+    identity_handles.append(
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="blue",
+            markeredgecolor="none",
+            alpha=0.3,
+            markersize=6,
+            label="References",
+        )
+    )
+
+    ax.set_title(
+        "All clones superimposed\n"
+        "cells coloured by assigned identity",
+        fontsize=12,
+    )
+    ax.set_aspect("equal", adjustable="box")
+    ax.tick_params(labelsize=8, length=3)
+
+    ax.legend(
+        handles=identity_handles,
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1),
+        frameon=False,
+        fontsize=7,
+    )
+
+    base_path = (
+        output_folder
+        / f"All_clones_superimposed_assigned_colours_{curr_date}"
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".svg"),
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        base_path.with_suffix(".png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+def save_tiled_clone_overlay_identity_figure(
+    plot_records,
+    output_folder,
+    output_name,
+    curr_date,
+    reference_SC=None,
+    bilateral=False,
+):
+    """
+    Save one panel per clone, with all sections overlaid.
+
+    bilateral=False:
+        Draw one right hemicord and reflect all cells to positive X.
+
+    bilateral=True:
+        Draw both hemicords and retain signed left/right cell positions.
+    """
+    if not plot_records:
+        print(
+            "No clone sections were successfully loaded; "
+            "no clone-overlay tiled plot was created."
+        )
+        return
+
+    # Select the appropriate final X-coordinate column.
+    x_column = get_scaled_x_column(bilateral=bilateral)
+
+    clone_ids = sorted({
+        record["clone_id"]
+        for record in plot_records
+    })
+
+    n_plots = len(clone_ids)
+    n_cols = min(5, max(1, math.ceil(math.sqrt(n_plots))))
+    n_rows = math.ceil(n_plots / n_cols)
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(4.0 * n_cols, 4.0 * n_rows),
+        squeeze=False,
+        constrained_layout=True,
+    )
+
+    for ax, clone_id in zip(axes.flat, clone_ids):
+        # This must receive bilateral=True for the bilateral version.
+        draw_reference_cord(
+            ax=ax,
+            reference_SC=reference_SC,
+            bilateral=bilateral,
+        )
+
+        clone_records = [
+            record
+            for record in plot_records
+            if record["clone_id"] == clone_id
+        ]
+
+        for record in clone_records:
+            cells = record["cells"]
+            refs = record["refs"]
+
+            if x_column not in cells.columns:
+                raise KeyError(
+                    f"{x_column!r} is missing from cells for "
+                    f"{clone_id}, section {record['section']}."
+                )
+
+            assigned_identity = (
+                cells["Assigned cell identity"]
+                .astype(str)
+                .str.strip()
+            )
+
+            is_progenitor = assigned_identity.eq("Progenitor")
+            is_differentiating = assigned_identity.eq("Differentiating Neuron")
+
+            regular_cells = cells.loc[
+                ~(is_progenitor | is_differentiating)
+            ]
+
+            progenitor_cells = cells.loc[is_progenitor]
+
+            differentiating_cells = cells.loc[is_differentiating]
+
+            # Filled identity-coloured cells.
+            # Filled identity-coloured cells.
+            if not regular_cells.empty:
+                ax.scatter(
+                    regular_cells[x_column],
+                    regular_cells["Scaled Position Y"],
+                    s=22,
+                    c=regular_cells[
+                        "Assigned cell colour"
+                    ].fillna(
+                        e13id.CELL_IDENTITY_PALETTE[
+                            "Unidentified cells"
+                        ]
+                    ),
+                    alpha=0.85,
+                    edgecolors="none",
+                    linewidths=0,
+                    zorder=2,
+                )
+
+            # Empty circles for progenitors.
+            if not progenitor_cells.empty:
+                ax.scatter(
+                    progenitor_cells[x_column],
+                    progenitor_cells["Scaled Position Y"],
+                    s=22,
+                    facecolors="none",
+                    edgecolors="darkgrey",
+                    linewidths=0.8,
+                    alpha=1.0,
+                    zorder=4,
+                )
+            
+            if not differentiating_cells.empty:
+                ax.scatter(
+                    differentiating_cells[x_column],
+                    differentiating_cells["Scaled Position Y"],
+                    s=22,
+                    facecolors="none",
+                    edgecolors="#286F9E",
+                    linewidths=0.8,
+                    alpha=1.0,
+                    zorder=4,
+                )
+
+            # if not refs.empty and x_column in refs.columns:
+            #     ax.scatter(
+            #         refs[x_column],
+            #         refs["Scaled Position Y"],
+            #         s=22,
+            #         c="blue",
+            #         alpha=0.18,
+            #         linewidths=0,
+            #         zorder=3,
+            #     )
+
+        ax.set_title(clone_id, fontsize=8)
+        ax.set_aspect("equal", adjustable="box")
+        ax.tick_params(labelsize=6, length=2)
+
+    for ax in axes.flat[n_plots:]:
+        ax.set_visible(False)
+
+    identity_handles = [
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor=e13id.CELL_IDENTITY_PALETTE[identity],
+            markeredgecolor="none",
+            markersize=6,
+            label=identity,
+        )
+        for identity in e13id.CELL_IDENTITY_ORDER
+        if identity not in {
+            "Progenitor",
+            "Differentiating Neuron",
+        }
+    ]
+
+    identity_handles.insert(
+        0,
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="none",
+            markeredgecolor="darkgrey",
+            markeredgewidth=0.8,
+            markersize=6,
+            label="Progenitor",
+        ),
+    )
+    
+    identity_handles.insert(
+        1,
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="none",
+            markeredgecolor="#286F9E",
+            markeredgewidth=0.8,
+            markersize=6,
+            label="Differentiating Neuron",
+        ),
+    )
+
+    identity_handles.append(
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="blue",
+            markeredgecolor="none",
+            alpha=0.3,
+            markersize=6,
+            label="References",
+        )
+    )
+
+    fig.legend(
+        handles=identity_handles,
+        loc="upper right",
+        bbox_to_anchor=(1.01, 1.0),
+        frameon=False,
+        fontsize=7,
+    )
+
+    plot_type = "bilateral" if bilateral else "right hemicord"
+
+    fig.suptitle(
+        "E13 clones after scaling to the reference spinal cord\n"
+        f"one panel per clone; sections overlaid; {plot_type}",
+        fontsize=12,
+    )
+
+    # Include the date so repeated runs do not overwrite earlier plots.
+    base_path = (
+        output_folder
+        / f"{output_name}_{curr_date}"
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".svg"),
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        base_path.with_suffix(".png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+def save_tiled_clone_overlay_rg_figure(
+    plot_records,
+    output_folder,
+    output_name,
+    curr_date,
+    reference_SC=None,
+    bilateral=False,
+):
+    """
+    Save one panel per clone, with all sections overlaid.
+
+    Non-progenitor cells:
+        Colour == 'r' -> red
+        Colour == 'g' -> green
+
+    Progenitors:
+        empty circles regardless of Colour.
+
+    bilateral=False:
+        Plot all cells on the positive-X hemicord.
+
+    bilateral=True:
+        Retain signed left/right positions.
+    """
+
+    if not plot_records:
+        print(
+            "No clone sections were successfully loaded; "
+            "no r/g clone-overlay plot was created."
+        )
+        return
+
+    x_column = get_scaled_x_column(bilateral=bilateral)
+
+    clone_ids = sorted({
+        record["clone_id"]
+        for record in plot_records
+    })
+
+    n_plots = len(clone_ids)
+    n_cols = min(5, max(1, math.ceil(math.sqrt(n_plots))))
+    n_rows = math.ceil(n_plots / n_cols)
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(4.0 * n_cols, 4.0 * n_rows),
+        squeeze=False,
+        constrained_layout=True,
+    )
+
+    colour_map = {
+        "r": ColPals.madmred,
+        "g": ColPals.madmgreen,
+    }
+
+    for ax, clone_id in zip(axes.flat, clone_ids):
+
+        draw_reference_cord(
+            ax=ax,
+            reference_SC=reference_SC,
+            bilateral=bilateral,
+        )
+
+        clone_records = [
+            record
+            for record in plot_records
+            if record["clone_id"] == clone_id
+        ]
+
+        for record in clone_records:
+
+            cells = record["cells"]
+
+            if x_column not in cells.columns:
+                raise KeyError(
+                    f"{x_column!r} is missing from cells for "
+                    f"{clone_id}, section {record['section']}."
+                )
+
+            if "Colour" not in cells.columns:
+                raise KeyError(
+                    f"'Colour' column is missing from "
+                    f"{clone_id}, section {record['section']}."
+                )
+
+            # Identify progenitors.
+            is_progenitor = (
+                cells["Assigned cell identity"]
+                .astype(str)
+                .str.strip()
+                .eq("Progenitor")
+            )
+
+            non_progenitor_cells = cells.loc[~is_progenitor].copy()
+            progenitor_cells = cells.loc[is_progenitor].copy()
+
+            # Colour cells according to r/g in Colour column
+            if not non_progenitor_cells.empty:
+
+                cell_colours = (
+                    non_progenitor_cells["Colour"]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                    .map(colour_map)
+                    .fillna("lightgrey")
+                )
+
+                ax.scatter(
+                    non_progenitor_cells[x_column],
+                    non_progenitor_cells["Scaled Position Y"],
+                    s=22,
+                    c=cell_colours,
+                    alpha=0.85,
+                    edgecolors="none",
+                    linewidths=0,
+                    zorder=2,
+                )
+
+            # Plot progenitors as empty circles
+            if not progenitor_cells.empty:
+
+                progenitor_colours = (
+                    progenitor_cells["Colour"]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                    .map(colour_map)
+                    .fillna("lightgrey")
+                )
+
+                ax.scatter(
+                    progenitor_cells[x_column],
+                    progenitor_cells["Scaled Position Y"],
+                    s=22,
+                    facecolors="none",
+                    edgecolors=progenitor_colours,
+                    linewidths=0.8,
+                    alpha=1.0,
+                    zorder=4,
+                )
+
+        ax.set_title(clone_id, fontsize=8)
+        ax.set_aspect("equal", adjustable="box")
+        ax.tick_params(labelsize=6, length=2)
+
+    # Hide unused axes.
+    for ax in axes.flat[n_plots:]:
+        ax.set_visible(False)
+
+    # Legend
+    handles = [
+    mpl.lines.Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="",
+        markerfacecolor="red",
+        markeredgecolor="none",
+        markersize=6,
+        label="r",
+    ),
+    mpl.lines.Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="",
+        markerfacecolor="green",
+        markeredgecolor="none",
+        markersize=6,
+        label="g",
+    ),
+    mpl.lines.Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="",
+        markerfacecolor="none",
+        markeredgecolor="red",
+        markeredgewidth=0.8,
+        markersize=6,
+        label="r progenitor",
+    ),
+    mpl.lines.Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="",
+        markerfacecolor="none",
+        markeredgecolor="green",
+        markeredgewidth=0.8,
+        markersize=6,
+        label="g progenitor",
+    ),
+]
+
+    fig.legend(
+        handles=handles,
+        loc="upper right",
+        bbox_to_anchor=(1.01, 1.0),
+        frameon=False,
+        fontsize=7,
+    )
+
+    plot_type = "bilateral" if bilateral else "right hemicord"
+
+    fig.suptitle(
+        "E13 clones after scaling to the reference spinal cord\n"
+        f"cells coloured by r/g; {plot_type}",
+        fontsize=12,
+    )
+
+    base_path = (
+        output_folder
+        / f"{output_name}_{curr_date}"
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".svg"),
+        bbox_inches="tight",
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+def save_progenitor_clone_overlay_figure(
+    plot_records,
+    output_folder,
+    curr_date,
+    reference_SC=None,
+    marker_size=15,
+    marker_alpha=0.8,
+    bilateral=False,
+):
+    """
+    Plot only progenitor cells from all clones.
+
+    Progenitors are coloured according to clone identity.
+
+    Parameters
+    ----------
+    plot_records : list
+        Scaled plot records.
+
+    output_folder : Path
+        Output folder.
+
+    curr_date : str
+        Date/time string used in output filename.
+
+    reference_SC : dict, optional
+        Reference spinal cord outline.
+
+    marker_size : float
+        Marker size passed to ax.scatter().
+
+    marker_alpha : float
+        Marker opacity from 0 (transparent) to 1 (opaque).
+
+    bilateral : bool
+        False = plot all cells on the positive-X hemicord.
+        True = retain left/right hemisphere positions.
+    """
+
+    if not plot_records:
+        print(
+            "No clone sections were successfully loaded; "
+            "no progenitor clone-coloured overlay was created."
+        )
+        return
+
+    fig, ax = plt.subplots(
+        figsize=(8, 8),
+        constrained_layout=True,
+    )
+
+    draw_reference_cord(
+        ax=ax,
+        reference_SC=reference_SC,
+        bilateral=bilateral,
+    )
+
+    x_column = get_scaled_x_column(bilateral=bilateral)
+
+    clone_ids = sorted({
+        record["clone_id"]
+        for record in plot_records
+    })
+
+    # Use a smaller set of high-contrast colours, combined with shapes
+    base_colours = list(plt.get_cmap("tab10").colors)
+
+    marker_cycle = [
+        "o",  # circle
+        "s",  # square
+        "^",  # triangle up
+        "v",  # triangle down
+        "X",  # filled x
+        "<",  # triangle left
+        ">",  # triangle right
+    ]
+
+    style_combinations = [
+        {"color": color, "marker": marker}
+        for marker in marker_cycle
+        for color in base_colours
+    ]
+
+    if len(clone_ids) > len(style_combinations):
+        raise ValueError(
+            f"Not enough clone styles for {len(clone_ids)} clones. "
+            f"Increase the number of colours or marker shapes."
+        )
+
+    clone_styles = {
+        clone_id: style_combinations[i]
+        for i, clone_id in enumerate(clone_ids)
+    }
+    clones_with_progenitors = []
+
+    for clone_id in clone_ids:
+
+        clone_records = [
+            record
+            for record in plot_records
+            if record["clone_id"] == clone_id
+        ]
+
+        # Combine all sections belonging to this clone
+        clone_cells = pd.concat(
+            [
+                record["cells"]
+                for record in clone_records
+            ],
+            ignore_index=True,
+        )
+
+        if "Assigned cell identity" not in clone_cells.columns:
+            print(
+                f"WARNING: {clone_id} has no "
+                "'Assigned cell identity' column."
+            )
+            continue
+
+        # Keep only progenitors
+        progenitor_cells = clone_cells[
+            clone_cells["Assigned cell identity"] == "Progenitor"
+        ].copy()
+
+        if progenitor_cells.empty:
+            continue
+
+        clones_with_progenitors.append(clone_id)
+
+        style = clone_styles[clone_id]
+
+        ax.scatter(
+            progenitor_cells[x_column],
+            progenitor_cells["Scaled Position Y"],
+            s=marker_size,
+            marker=style["marker"],
+            facecolors=style["color"],
+            edgecolors="black",
+            linewidths=0.4,
+            alpha=marker_alpha,
+            zorder=3,
+        )
+
+    # Legend only for clones that actually contain progenitors
+    handles = [
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker=clone_styles[clone_id]["marker"],
+            linestyle="",
+            markerfacecolor=clone_styles[clone_id]["color"],
+            markeredgecolor="black",
+            markeredgewidth=0.4,
+            markersize=7,
+            alpha=marker_alpha,
+            label=clone_id,
+        )
+        for clone_id in clones_with_progenitors
+    ]
+
+    ax.set_title(
+        "Progenitor positions\n"
+        "coloured by clone",
+        fontsize=12,
+    )
+
+    ax.set_aspect(
+        "equal",
+        adjustable="box",
+    )
+
+    ax.tick_params(
+        labelsize=8,
+        length=3,
+    )
+
+    if handles:
+        ax.legend(
+            handles=handles,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1),
+            frameon=False,
+            fontsize=7,
+        )
+
+    plot_type = "bilateral" if bilateral else "right hemicord"
+
+    base_path = (
+        output_folder
+        / f"All_clones_progenitors_by_clone_{plot_type}_{curr_date}"
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".svg"),
+        bbox_inches="tight",
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+    print(
+        "\nSaved progenitor clone-coloured overlay:"
+        f"\n{base_path}"
+    )
+
+def save_progenitor_identity_overlay_figure(
+    plot_records,
+    output_folder,
+    curr_date,
+    reference_SC=None,
+    marker_radius=10,
+    marker_alpha=0.8,
+    include_unidentified=False,
+    bilateral=False,
+):
+    """
+    Plot only progenitor cells from all clones.
+
+    Each progenitor is coloured according to the non-progenitor identities
+    found elsewhere in the same clone.
+
+    If a clone contains multiple non-progenitor identities, each progenitor
+    is drawn as a circle divided into equal coloured sectors.
+    """
+    if not plot_records:
+        print(
+            "No clone sections were successfully loaded; "
+            "no progenitor identity overlay was created."
+        )
+        return
+
+    fig, ax = plt.subplots(
+        figsize=(8, 8),
+        constrained_layout=True,
+    )
+
+    draw_reference_cord(ax, reference_SC)
+
+    clone_ids = sorted({
+        record["clone_id"]
+        for record in plot_records
+    })
+
+    plotted_identities = set()
+    clones_without_non_progenitor_identity = []
+    
+    # Collapse all unidentified positional subclasses into one display identity.
+    unidentified_identity_map = {
+        "Unidentified dorsal": "Unidentified cells",
+        "Unidentified ventral": "Unidentified cells",
+    }
+
+    # Identities that should not determine progenitor colour.
+    excluded_from_progenitor_identity = {
+        "Progenitor",
+        "Differentiating Neuron",
+    }
+
+    # Plot/legend order after combining the unidentified categories. 
+    identity_order_for_progenitor_plot = [
+        identity
+        for identity in e13id.CELL_IDENTITY_ORDER_NO_PR
+        if identity not in {
+            "Differentiating Neuron",
+            "Unidentified dorsal",
+            "Unidentified ventral",
+        }
+    ]
+
+    for clone_id in clone_ids:
+        clone_records = [
+            record
+            for record in plot_records
+            if record["clone_id"] == clone_id
+        ]
+
+        # Combine every section belonging to this clone.
+        clone_cells = pd.concat(
+            [
+                record["cells"]
+                for record in clone_records
+            ],
+            ignore_index=True,
+        )
+
+        if "Assigned cell identity" not in clone_cells.columns:
+            print(
+                f"WARNING: {clone_id} has no "
+                "'Assigned cell identity' column."
+            )
+            continue
+
+        # Only the progenitor coordinates will be drawn.
+        progenitor_cells = clone_cells[
+            clone_cells["Assigned cell identity"] == "Progenitor"
+        ].copy()
+
+        if progenitor_cells.empty:
+            continue
+
+        # Clean and combine identities before determining the colours assigned
+        # to progenitors from this clone.
+        plot_identity = (
+            clone_cells["Assigned cell identity"]
+            .astype("string")
+            .str.strip()
+            .replace(unidentified_identity_map)
+        )
+
+        # Exclude progenitors themselves and differentiating neurons.
+        eligible_identity = ~plot_identity.isin(
+            excluded_from_progenitor_identity
+        )
+
+        identity_counts = (
+            plot_identity.loc[eligible_identity]
+            .dropna()
+            .value_counts()
+        )
+
+        # Optionally remove the single combined unidentified category.
+        if not include_unidentified:
+            identity_counts = identity_counts.drop(
+                labels=["Unidentified cells"],
+                errors="ignore",
+            )
+
+        # Preserve the standard E13 identity order, while using only the
+        # combined unidentified category.
+        clone_identities = [
+            identity
+            for identity in identity_order_for_progenitor_plot
+            if identity in identity_counts.index
+        ]
+
+        clone_colours = [
+            e13id.CELL_IDENTITY_PALETTE[identity]
+            for identity in clone_identities
+        ]
+
+        plotted_identities.update(clone_identities)
+
+        if len(clone_identities) == 0:
+            clones_without_non_progenitor_identity.append(clone_id)
+
+        # Every progenitor belonging to this clone gets the same
+        # clone-level identity colour combination.
+        for _, progenitor in progenitor_cells.iterrows():
+            draw_multicolour_circle(
+                ax=ax,
+                x=float(progenitor["Scaled Position X"]),
+                y=float(progenitor["Scaled Position Y"]),
+                colours=clone_colours,
+                radius=marker_radius,
+                edgecolor="black",
+                alpha=1.0,
+                linewidth=0.4,
+                zorder=3,
+            )
+
+    # Only show identities that actually occurred in the plot.
+    identity_handles = [
+        mpl.lines.Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor=e13id.CELL_IDENTITY_PALETTE[identity],
+            markeredgecolor="black",
+            markeredgewidth=0.4,
+            markersize=7,
+            alpha=marker_alpha,
+            label=identity,
+        )
+        for identity in identity_order_for_progenitor_plot
+        if identity in plotted_identities
+    ]
+
+    if clones_without_non_progenitor_identity:
+        identity_handles.append(
+            mpl.lines.Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor="lightgrey",
+                markeredgecolor="black",
+                markeredgewidth=0.4,
+                markersize=7,
+                label="No identified non-progenitor cells",
+            )
+        )
+
+    ax.set_title(
+        "Progenitor positions\n"
+        "colours indicate non-progenitor identities in the same clone",
+        fontsize=12,
+    )
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.tick_params(labelsize=8, length=3)
+
+    if identity_handles:
+        ax.legend(
+            handles=identity_handles,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1),
+            frameon=False,
+            fontsize=7,
+        )
+
+    base_path = (
+        output_folder
+        / f"All_clones_progenitors_by_clone_identity_{curr_date}"
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".svg"),
+        bbox_inches="tight",
+    )
+
+    fig.savefig(
+        base_path.with_suffix(".png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+    print(
+        "\nSaved progenitor identity overlay:"
+        f"\n{base_path}"
+    )
+
+    if clones_without_non_progenitor_identity:
+        print(
+            "\nClones with progenitors but no identified "
+            "non-progenitor identities:"
+        )
+
+        for clone_id in clones_without_non_progenitor_identity:
+            print("  ", clone_id)
+
+def draw_reference_cord(
+    ax,
+    reference_SC,
+    bilateral=False,
+):
+    """Draw the normalized reference spinal cord."""
+
+    if reference_SC is None:
+        return
+
+    outline = reference_SC["outline"]
+    ventricle = reference_SC["ventricle"]
+    vz = reference_SC["vz"]
+    fp = reference_SC["fp"]
+    rp = reference_SC["rp"]
+
+    def draw_side(x_sign):
+        outline_x = (
+            outline["Normalized X"].astype(float)
+            * x_sign
+        )
+
+        ventricle_x = (
+            ventricle["Normalized X"].astype(float)
+            * x_sign
+        )
+
+        vz_x = (
+            vz["Normalized X"].astype(float)
+            * x_sign
+        )
+        
+        fp_x = (
+            fp["Normalized X"].astype(float)
+            * x_sign
+        )
+        
+        rp_x = (
+                    rp["Normalized X"].astype(float)
+                    * x_sign
+                )
+
+        ax.fill(
+            outline_x,
+            outline["Normalized Y"],
+            facecolor="#f2f2f2",
+            edgecolor="#808080",
+            linewidth=1.2,
+            alpha=1.0,
+            zorder=0,
+        )
+
+        ax.plot(
+            ventricle_x,
+            ventricle["Normalized Y"],
+            color="#606060",
+            linewidth=1.0,
+            zorder=1,
+        )
+
+        ax.plot(
+            vz_x,
+            vz["Normalized Y"],
+            color="#808080",
+            linewidth=1.0,
+            linestyle="--",
+            zorder=1,
+        )
+        
+        ax.plot(
+            fp_x,
+            fp["Normalized Y"],
+            color="#808080",
+            linewidth=1.0,
+            linestyle="--",
+            zorder=1,
+        )
+        
+        ax.plot(
+            rp_x,
+            rp["Normalized Y"],
+            color="#808080",
+            linewidth=1.0,
+            linestyle="--",
+            zorder=1,
+        )
+
+    # Positive-X hemicord, matching Scaled Position X.
+    draw_side(x_sign=1)
+
+    if bilateral:
+        draw_side(x_sign=-1)
+
+    if bilateral:
+        ax.set_xlim(-676, 676)
+    else:
+        ax.set_xlim(-26, 676)
+
+    ax.set_ylim(-486, 486)
+    ax.set_aspect("equal", adjustable="box")
+
+def get_scaled_x_column(bilateral=False):
+    if bilateral:
+        return "Scaled Position X Bilateral"
+
+    return "Scaled Position X"
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+def main():
+    curr_date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    output_folder = OUTPUT_ROOT / f"{curr_date}_E13spatialanalysis"
+    clone_output_folder = output_folder / "Individual clone normalization inputs"
+    output_folder.mkdir(parents=True, exist_ok=False)
+    clone_output_folder.mkdir(parents=True, exist_ok=False)
+
+    input_file = caf.read_csv(str(INPUT_FILE_PATH), skip_rows=0)
+    ref_file = caf.read_csv(str(REF_FILE_PATH), skip_rows=0)
+    audit_rows = []
+    error_rows = []
+    raw_plot_records = []
+    rotated_plot_records = []
+    straightened_plot_records = []
+    scaled_plot_records = []
+
+    # SC level look-up
+    clone_overview = caf.read_csv(
+        str(CLONE_OVERVIEW_PATH),
+        skip_rows=0
+    )
+
+    # Build clone IDs in the same form used in this spatial script
+    clone_overview["clone_id"] = (
+        clone_overview["Litter"].astype(str).str.strip()
+        + "_"
+        + clone_overview["animal"].astype(str).str.strip()
+        + "_c"
+        + clone_overview["clone id"].astype(str)
+            .str.replace(r"\.0$", "", regex=True)
+            .str.strip()
+    )
+
+    # Clean RC level
+    clone_overview["RC Level"] = (
+        clone_overview["RC Level"]
+        .astype("string")
+        .str.strip()
+    )
+
+    # One RC level per clone
+    rc_level_lookup = (
+        clone_overview
+        .dropna(subset=["RC Level"])
+        .drop_duplicates(subset="clone_id")
+        .set_index("clone_id")["RC Level"]
+        .to_dict()
+    )
+
+    reference_SC = load_reference_SC()
+    
+    for row_index, input_row in input_file.iterrows():
+        # The supplied InputFile marks excluded clones in this column.
+        if pd.notna(input_row["Excluded"]):
+            print(
+                f"Skipping excluded clone at input row {row_index}: "
+                f"{input_row['Litter']}_{input_row['Animal']}_c{int(input_row['Clone'])} "
+                f"({input_row['Reason']})"
+            )
+            continue
+
+        if pd.isna(input_row["Spreadsheet"]):
+            print(f"Skipping input row {row_index}: no spreadsheet path.")
+            continue
+
+        clone_path = Path(str(input_row["Spreadsheet"]).strip().strip("'\""))
+        animal_id = f"{input_row['Litter']}_{input_row['Animal']}"
+        clone_id = f"c{int(input_row['Clone'])}"
+        full_clone_id = f"{animal_id}_{clone_id}"
+
+        try:
+            print(
+                f"\nLoading clone {row_index + 1}/{len(input_file)}: "
+                f"{full_clone_id}\n{clone_path}"
+            )
+            clone_cells = caf.read_csv(str(clone_path), skip_rows=0)
+            clone_cells.columns = clone_cells.columns.astype(str).str.strip()
+            clone_cells = e13id.add_cell_identity_annotations(clone_cells)
+
+            # As in ClonalAnalysis.py: retrieve the clone first, then use
+            # Section for the exact section-level matches.
+            clone_refs = retrieve_clone_references(
+                ref_file=ref_file,
+                animal_id=animal_id,
+                clone_id=clone_id,
+            )
+
+            audit = audit_clone_references(
+                clone_cells=clone_cells,
+                clone_refs=clone_refs,
+                animal_id=animal_id,
+                clone_id=clone_id,
+                clone_path=clone_path,
+            )
+            audit_rows.append(audit)
+
+            if clone_refs.empty:
+                print(f"WARNING: no Clone_Ref rows found for {full_clone_id}")
+            if audit["Missing reference sections"]:
+                print(
+                    f"WARNING: {full_clone_id} has no exact reference match for "
+                    f"section(s): {audit['Missing reference sections']}"
+                )
+
+            clone_cells_for_plot = clone_cells.copy()
+            clone_cells_for_plot["Section"] = (
+                clone_cells_for_plot["Section"].astype(str).str.strip()
+            )
+            clone_refs_for_plot = clone_refs.copy()
+            if not clone_refs_for_plot.empty:
+                clone_refs_for_plot["Section"] = (
+                    clone_refs_for_plot["Section"].astype(str).str.strip()
+                )
+
+            transformed_clone_sections = []
+
+            for section in sorted(clone_cells_for_plot["Section"].dropna().unique()):
+                section_cells = clone_cells_for_plot.loc[
+                    clone_cells_for_plot["Section"] == section
+                ].copy()
+                
+                section_refs = retrieve_section_references(
+                    clone_refs_for_plot, section
+                )
+                
+                raw_section_cells = section_cells.copy()
+                raw_section_refs = section_refs.copy()
+
+                try:
+                    rotated_section_cells, rotated_section_refs, rotation_degrees = (
+                        rotate_section_to_vertical(
+                            section_cells=section_cells,
+                            section_refs=section_refs,
+                        )
+                    )
+
+                    straightened_section_cells, straightened_section_refs = (
+                        straighten_section_midline(
+                            rotated_cells=rotated_section_cells,
+                            rotated_refs=rotated_section_refs,
+                        )
+                    )
+
+                    scaled_section_cells, scaled_section_refs = (
+                        scale_section_to_reference(
+                            straightened_cells=straightened_section_cells,
+                            straightened_refs=straightened_section_refs,
+                        )
+                    )
+
+                except ValueError as exc:
+                    print(
+                        f"WARNING: could not completely transform "
+                        f"{full_clone_id} | {section}: {exc}"
+                    )
+
+                    rotated_section_cells = section_cells.copy()
+                    rotated_section_cells["Rotated Position X"] = (
+                        rotated_section_cells["Position X"]
+                    )
+                    rotated_section_cells["Rotated Position Y"] = (
+                        rotated_section_cells["Position Y"]
+                    )
+
+                    rotated_section_refs = section_refs.copy()
+                    if not rotated_section_refs.empty:
+                        rotated_section_refs["Rotated Position X"] = (
+                            rotated_section_refs["Position X"]
+                        )
+                        rotated_section_refs["Rotated Position Y"] = (
+                            rotated_section_refs["Position Y"]
+                        )
+
+                    straightened_section_cells = rotated_section_cells.copy()
+                    straightened_section_cells["Straightened Position X"] = (
+                        straightened_section_cells["Rotated Position X"]
+                    )
+                    straightened_section_cells["Straightened Position Y"] = (
+                        straightened_section_cells["Rotated Position Y"]
+                    )
+
+                    straightened_section_refs = rotated_section_refs.copy()
+                    if not straightened_section_refs.empty:
+                        straightened_section_refs["Straightened Position X"] = (
+                            straightened_section_refs["Rotated Position X"]
+                        )
+                        straightened_section_refs["Straightened Position Y"] = (
+                            straightened_section_refs["Rotated Position Y"]
+                        )
+
+                    scaled_section_cells = straightened_section_cells.copy()
+                    scaled_section_cells["Scaled Position X"] = (
+                        scaled_section_cells["Straightened Position X"]
+                    )
+                    scaled_section_cells["Scaled Position Y"] = (
+                        scaled_section_cells["Straightened Position Y"]
+                    )
+
+                    scaled_section_refs = straightened_section_refs.copy()
+                    if not scaled_section_refs.empty:
+                        scaled_section_refs["Scaled Position X"] = (
+                            scaled_section_refs["Straightened Position X"]
+                        )
+                        scaled_section_refs["Scaled Position Y"] = (
+                            scaled_section_refs["Straightened Position Y"]
+                        )
+
+                missing_ref_labels = []
+                if section_refs.empty:
+                    missing_ref_labels = EXPECTED_REFS.copy()
+                else:
+                    section_ref_labels = set(
+                        section_refs["Ref"].dropna().astype(str).str.strip()
+                    )
+                    missing_ref_labels = sorted(
+                        set(EXPECTED_REFS) - section_ref_labels
+                    )
+
+                record_info = {
+                    "clone_id": full_clone_id,
+                    "section": section,
+                    "RC Level": rc_level_lookup.get(full_clone_id, pd.NA),
+                    "missing_sections": [section] if section_refs.empty else [],
+                    "missing_ref_labels": missing_ref_labels,
+                }
+                raw_plot_records.append(
+                    {
+                        **record_info,
+                        "cells": raw_section_cells,
+                        "refs": raw_section_refs,
+                    }
+                )
+                rotated_plot_records.append(
+                    {
+                        **record_info,
+                        "cells": rotated_section_cells,
+                        "refs": rotated_section_refs,
+                    }
+                )
+                straightened_plot_records.append(
+                    {
+                        **record_info,
+                        "cells": straightened_section_cells,
+                        "refs": straightened_section_refs,
+                    }
+                )
+                scaled_plot_records.append(
+                    {
+                        **record_info,
+                        "cells": scaled_section_cells,
+                        "refs": scaled_section_refs,
+                    }
+                )
+
+                transformed_clone_sections.append(scaled_section_cells)
+
+            transformed_clone_cells = pd.concat(
+                transformed_clone_sections,
+                ignore_index=True,
+            )
+            prepared = prepare_clone_output(
+                clone_cells=transformed_clone_cells,
+                clone_refs=clone_refs,
+                animal_id=animal_id,
+                clone_id=clone_id,
+            )
+            output_csv = (
+                clone_output_folder / f"{full_clone_id}_normalized.csv"
+            )
+            prepared.to_csv(output_csv, index=False)
+
+        except Exception as exc:
+            print(f"ERROR while processing {full_clone_id}: {exc}")
+            error_rows.append(
+                {
+                    "Input row": row_index,
+                    "Clone file": str(clone_path),
+                    "Clone ID": full_clone_id,
+                    "Error": str(exc),
+                }
+            )
+
+    pd.DataFrame(audit_rows).to_csv(
+        output_folder / f"Reference_matching_audit_{curr_date}.csv",
+        index=False,
+    )
+
+    if error_rows:
+        pd.DataFrame(error_rows).to_csv(
+            output_folder / f"Clone_loading_errors_{curr_date}.csv",
+            index=False,
+        )
+
+    # # Per clone per section before rotation
+    # save_tiled_clone_figure(
+    #     plot_records=raw_plot_records,
+    #     output_folder=output_folder,
+    #     curr_date=curr_date,
+    #     x_column="Position X",
+    #     y_column="Position Y",
+    #     stage_name="01_before_rotation",
+    #     stage_title="before rotation",
+    # )
+    
+    # # Per clone per section after rotation
+    # save_tiled_clone_figure(
+    #     plot_records=rotated_plot_records,
+    #     output_folder=output_folder,
+    #     curr_date=curr_date,
+    #     x_column="Rotated Position X",
+    #     y_column="Rotated Position Y",
+    #     stage_name="02_after_rotation",
+    #     stage_title="after rotation",
+    # )
+    
+    # # Per clone per section after VT-CC-CB (midline) alignment
+    # save_tiled_clone_figure(
+    #     plot_records=straightened_plot_records,
+    #     output_folder=output_folder,
+    #     curr_date=curr_date,
+    #     x_column="Straightened Position X",
+    #     y_column="Straightened Position Y",
+    #     stage_name="03_after_VT_CC_VB_alignment",
+    #     stage_title="after VT-CC-VB alignment",
+    # )
+    
+    # # Per clone per section after scaling with reference outline
+    # save_tiled_clone_figure(
+    #     plot_records=scaled_plot_records,
+    #     output_folder=output_folder,
+    #     curr_date=curr_date,
+    #     x_column="Scaled Position X",
+    #     y_column="Scaled Position Y",
+    #     stage_name="04_after_scaling",
+    #     stage_title="after scaling to the reference spinal cord",
+    #     reference_SC=reference_SC,
+    # )
+    
+    # Per clone per section after scaling with reference outline and ID colours
+    save_tiled_clone_figure(
+        plot_records=scaled_plot_records,
+        output_folder=output_folder,
+        curr_date=curr_date,
+        x_column="Scaled Position X",
+        y_column="Scaled Position Y",
+        stage_name="05_after_scaling_assigned_colours",
+        stage_title="after scaling to the reference spinal cord",
+        cell_colour_column="Assigned cell colour",
+        reference_SC=reference_SC,
+    )
+    
+    # One panel per clone section, no reference points/lines (bilateral).
+    save_tiled_sections_no_references(
+        scaled_plot_records, output_folder, curr_date,
+        reference_SC=reference_SC, colour_by="rg", bilateral=False,
+    )
+    save_tiled_sections_no_references(
+        scaled_plot_records, output_folder, curr_date,
+        reference_SC=reference_SC, colour_by="identity", bilateral=False,
+    )
+    
+    # One panel per clone section, no reference points/lines (bilateral).
+    save_tiled_sections_no_references(
+        scaled_plot_records, output_folder, curr_date,
+        reference_SC=reference_SC, colour_by="rg", bilateral=True,
+    )
+    save_tiled_sections_no_references(
+        scaled_plot_records, output_folder, curr_date,
+        reference_SC=reference_SC, colour_by="identity", bilateral=True,
+    )
+
+    # Per clone after scaling with reference outline and ID colours
+    save_tiled_clone_overlay_identity_figure(
+        plot_records=scaled_plot_records,
+        output_folder=output_folder,
+        output_name = 'All_clones_tiled_overlay_assigned_colours_unilateral',
+        curr_date=curr_date,
+        reference_SC=reference_SC,
+    )
+    
+    # Per clone after scaling with reference outline and ID colours, bilateral
+    save_tiled_clone_overlay_identity_figure(
+        plot_records=scaled_plot_records,
+        output_folder=output_folder,
+        output_name = 'All_clones_tiled_overlay_assigned_colours_bilateral',
+        curr_date=curr_date,
+        reference_SC=reference_SC,
+        bilateral = True,
+    )
+    
+    # Per clone after scaling with reference outline and R/G colour, bilateral
+    save_tiled_clone_overlay_rg_figure(
+    plot_records=scaled_plot_records,
+    output_folder=output_folder,
+    output_name = 'All_clones_tiled_overlay_rg_bilateral',
+    curr_date=curr_date,
+    reference_SC=reference_SC,
+    bilateral=True)
+    
+    # Per clone after scaling with reference outline and R/G colour, unilateral
+    save_tiled_clone_overlay_rg_figure(
+    plot_records=scaled_plot_records,
+    output_folder=output_folder,
+    output_name = 'All_clones_tiled_overlay_rg_unilateral',
+    curr_date=curr_date,
+    reference_SC=reference_SC,
+    bilateral=False)
+    
+    # Use one global tab20 mapping so each clone keeps the same colour in
+    # the all-clones plot and every rostrocaudal-level subset.
+    all_clone_ids = sorted({
+        record["clone_id"]
+        for record in scaled_plot_records
+    })
+    tab20_colours = list(plt.get_cmap("tab20").colors)
+    global_clone_colours = {
+        clone_id: tab20_colours[i % len(tab20_colours)]
+        for i, clone_id in enumerate(all_clone_ids)
+    }
+
+    # All clones superimposed - unilateral
+    save_superimposed_clone_figure(
+        plot_records=scaled_plot_records,
+        output_folder=output_folder,
+        curr_date=curr_date,
+        reference_SC=reference_SC,
+        bilateral=False,
+        clone_colours=global_clone_colours,
+        output_name="All_clones_superimposed_unilateral",
+        title="All clones superimposed - unilateral",
+    )
+
+    # All clones superimposed - bilateral
+    save_superimposed_clone_figure(
+        plot_records=scaled_plot_records,
+        output_folder=output_folder,
+        curr_date=curr_date,
+        reference_SC=reference_SC,
+        bilateral=True,
+        clone_colours=global_clone_colours,
+        output_name="All_clones_superimposed_bilateral",
+        title="All clones superimposed - bilateral",
+    )
+
+    # Existing bilateral overview plots.
+    save_bilateral_all_clones_overlay(
+        scaled_plot_records, output_folder, curr_date,
+        reference_SC=reference_SC, colour_by="clone",
+    )
+    save_bilateral_all_clones_overlay(
+        scaled_plot_records, output_folder, curr_date,
+        reference_SC=reference_SC, colour_by="rc_level",
+    )
+
+    ### Superimposed BILATERAL clone plots split by rostrocaudal level
+    ### Lumbar and sacral are combined as lumbosacral.
+
+    rc_level_groups = {
+        "Cervical": ["Ce"],
+        "Thoracic": ["Th"],
+        "Lumbosacral": ["Lu", "Sa"],
+    }
+
+    for level_name, rc_codes in rc_level_groups.items():
+
+        level_records = [
+            record
+            for record in scaled_plot_records
+            if record.get("RC Level") in rc_codes
+        ]
+
+        if len(level_records) == 0:
+            print(
+                f"No clones found for {level_name}; "
+                "skipping superimposed plot."
+            )
+            continue
+
+        n_clones_level = len({
+            record["clone_id"]
+            for record in level_records
+        })
+
+        save_superimposed_clone_figure(
+            plot_records=level_records,
+            output_folder=output_folder,
+            curr_date=curr_date,
+            reference_SC=reference_SC,
+            bilateral=True,
+            clone_colours=global_clone_colours,
+            output_name=f"All_clones_superimposed_{level_name}_bilateral",
+            title=(
+                f"{level_name} clones superimposed "
+                f"(n={n_clones_level} clones)"
+            ),
+        )
+    
+    # All clones super-imposed with ID colours
+    save_superimposed_identity_figure(
+        plot_records=scaled_plot_records,
+        output_folder=output_folder,
+        curr_date=curr_date,
+        reference_SC=reference_SC
+    )
+    
+    save_progenitor_identity_overlay_figure(
+    plot_records=scaled_plot_records,
+    output_folder=output_folder,
+    curr_date=curr_date,
+    reference_SC=reference_SC,
+    marker_radius=10,
+    marker_alpha = 0.1,
+    include_unidentified=False,
+)
+
+    save_progenitor_clone_overlay_figure(
+    plot_records=scaled_plot_records,
+    output_folder=output_folder,
+    curr_date=curr_date,
+    reference_SC=reference_SC,
+    marker_size=80,
+    marker_alpha=0.5,
+    bilateral=False,
+)
+
+    print(f"\nFinished. Output folder:\n{output_folder}")
+    print("Coordinates were rotated, straightened, and scaled.")
+
+
+if __name__ == "__main__":
+    main()
