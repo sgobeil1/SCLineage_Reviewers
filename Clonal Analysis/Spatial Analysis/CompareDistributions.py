@@ -178,13 +178,14 @@ import matplotlib.colors as mcolors
 now = datetime.datetime.now()
 curr_date = now.strftime("%Y%m%d_%H%M%S")
     
-########################################################################################################################################################################################################
-### User input
-CORD_MAT_PATH = r"Z:\People\Sophie\3 Code\Matlab Plot Code_Mariano\cord.mat"  # Path of the cord.mat file
-REF_DIR       = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251114 AB Spatial Map\20251114 Lumbar Matt and Giulia Counting\AB Files" # Path of the folder ("AB Files") containing the AB distributions (cell coordinates). The KDEs are built from these files
-QUERY_DIR     = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20260113 Clone Spatial Analysis\Sparsest dataset normalized clones - Neurons only 80% complete\Output_20260117_102658" # Path of the folder containing csv files of normalized individual clones (output of SCNormalization_BLT)
-OUTPUT_DIR    = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20260113 Clone Spatial Analysis\AB vs Clone distribution comparison\Output_Sparsest dataset neurons only 80% complete_" # Desired output folder 
-os.makedirs(OUTPUT_DIR + curr_date, exist_ok=True)
+# --------------------------
+# User settings
+# --------------------------
+CORD_MAT_PATH = r"Z:\People\Sophie\3 Code\Matlab Plot Code_Mariano\cord.mat"  # adjust if needed
+REF_DIR       = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251114 AB Spatial Map\20251114 Lumbar Matt and Giulia Counting\AB Files"     # KDEs are built from these files
+QUERY_DIR     = r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\20260824 Clone Spatial Analysis\Normalized clones - Neurons only 80% complete\Output_20260824_142450"
+OUTPUT_DIR    = r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\20261021 Clone Spatial Analysis\AB vs Clone distribution comparison\Output_neurons only 80% complete" + curr_date
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Thoracic vs Lumbar scaling (if needed): set to 1/1.49 for T (as in MATLAB), else 1.0
 X_SCALE = 1.0  # e.g., 1.0 for L, or (1/1.49) for T
@@ -207,7 +208,7 @@ else:
     X_GRID = (-X_LIMS[1], X_LIMS[1])
 Y_GRID     = (Y_LIMS[0],  Y_LIMS[1])
 BW_METHOD  = "scott"
-PERCENTILES_QUERY = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]  # ascending!
+PERCENTILES_QUERY = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70]  # ascending!
 
 # Percentiles used for plotting contours (can be different)
 PERCENTILES_PLOT  = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70]  # tweak as you like
@@ -230,21 +231,22 @@ PASTEL_V = 0.95           # pastel value/brightness
 
 # Same custom colours as in PlotTransverseDistribution_20250411.py
 CUSTOM_COLORS = {
-    "V3 (Nkx2.2+).csv": "#E6F598",     # pale green
-    "MN (Hb9+).csv": "#8079b7",        # purple
-    "MN (ventral Isl+).csv": "#5e4fa2",# purple
-    "V1 (En1+).csv": "#D53E4F",        # red
-    "V1 (En1+FoxD3+).csv": "#db7785",  # red
-    "V0 (Evx1+).csv": "#FDAE61",       # orange
-    "V2 (Chx10+).csv": "#66C2A5",      # teal
-    "dI1 (Barhl1+).csv": "#ABDDA4",    # green
-    "dI2 (FoxD3+En1-).csv": "#FEE08B", # yellow
-    "dI3 (Isl+Tlx3+Lbx1-).csv": "#9b9b9b",  # grey
-    "dI3 (dorsal Isl+).csv": "#777777",     # grey
-    "dI6 (Dmrt3+).csv": "#9B6981FF",        # mauve
-    "dI5 (Tlx3+).csv": "#236687",          # blue
-    "dI5 (Lmx1b+).csv": "#5baece",         # blue
-    "dI5 (Lbx1+Tlx3+).csv": "#3288BD",     # blue
+    "V3 (Nkx2.2+).csv": "#D53E4F",     
+    "MN (Hb9+).csv": "#F46D43",        
+    "MN (ventral Isl+).csv": "#F46D43",
+    "V2 (Chx10+).csv": "#FDAE61",   
+    "V1 (En1+).csv": "#FDCB6E",        
+    "V1 (En1+FoxD3+).csv": "#FDCB6E",  
+    "V0 (Evx1+).csv": "#FEE08B",       
+    "dI6 (Dmrt3+).csv": "#E6F598",        
+    "dI5 (Tlx3+).csv": "#3288BD",          
+    "dI5 (Lmx1b+).csv": "#3288BD",        
+    "dI5 (Lbx1+Tlx3+).csv": "#3288BD",    
+    "dI4 (dorsal Sall3+).csv": "#283394",    
+    "dI3 (Isl+Tlx3+Lbx1-).csv": "#7BC87C", 
+    "dI3 (dorsal Isl+).csv": "#7BC87C",     
+    "dI2 (FoxD3+En1-).csv": "#17B684", 
+    "dI1 (Barhl1+).csv": "#ABDDA4",   
 }
 
 # --------------------------
@@ -557,6 +559,88 @@ def plot_clone_overlay(xq, yq, refs, qname, out_dir):
 # --------------------------
 # Main
 # --------------------------
+
+
+def save_reference_kde_plots(refs, out_dir):
+    """
+    Save one standalone spatial KDE plot for each reference AB/class.
+
+    Each plot shows:
+      - the hemicord outline,
+      - the filled KDE HDR regions for that reference,
+      - contour lines for the requested plotting percentiles,
+      - the original reference points used to build the KDE.
+    """
+    if not refs:
+        return
+
+    ref_plot_dir = os.path.join(out_dir, "reference_kde_plots")
+    os.makedirs(ref_plot_dir, exist_ok=True)
+    cmap = get_cmap(CMAP_NAME)
+
+    for idx, ref in enumerate(refs):
+        gx = ref["gx"]
+        gy = ref["gy"]
+        Z = ref["Z"]
+        levels_raw = ref["levels_plot"]
+        xr = ref.get("x_points", np.array([]))
+        yr = ref.get("y_points", np.array([]))
+
+        finite_levels = levels_raw[np.isfinite(levels_raw)]
+        if finite_levels.size == 0:
+            continue
+        levels_plot = np.sort(finite_levels)
+
+        if COLOR_MODE == "assigned":
+            color = get_color_for_file(ref["path"], idx, cmap)
+        else:
+            color = cmap(idx % cmap.N)
+
+        fig, ax = plt.subplots(figsize=(5, 5), dpi=300)
+        draw_hemisection_outline(ax, X_LIMS, Y_LIMS,
+                                 facecolor=(0.96, 0.96, 0.96),
+                                 edgecolor="k",
+                                 lw=1.0)
+
+        ax.contourf(
+            gx,
+            gy,
+            Z,
+            levels=np.append(levels_plot, Z.max()),
+            colors=[color],
+            alpha=OVERLAY_FILL_ALPHA,
+            antialiased=True,
+        )
+        ax.contour(
+            gx,
+            gy,
+            Z,
+            levels=levels_plot,
+            colors=[color],
+            linewidths=0.8,
+            alpha=OVERLAY_LINE_ALPHA,
+        )
+
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(X_GRID)
+        ax.set_ylim(Y_GRID)
+        ax.set_xlabel("X (µm)")
+        ax.set_ylabel("Y (µm)")
+        hemi_label = "right" if HEMISPHERES == "single" and SINGLE_HEMISPHERE == "right" else "hemicord"
+        ax.set_title(f"{ref['name']} KDE ({hemi_label})", fontsize=9)
+        fig.tight_layout()
+
+        base = re.sub(r"[^\w\-]+", "_", ref["name"])
+        png_path = os.path.join(ref_plot_dir, f"reference_kde_{base}.png")
+        svg_path = os.path.join(ref_plot_dir, f"reference_kde_{base}.svg")
+        fig.savefig(png_path, dpi=300)
+        fig.savefig(svg_path)
+        plt.close(fig)
+        print(f"[REF PLOT] {png_path}")
+
+# --------------------------
+# Main
+# --------------------------
 def main():
     # --- Collect reference files (build KDEs) ---
     ref_paths = sorted(glob.glob(os.path.join(REF_DIR, "*.csv")))
@@ -600,11 +684,15 @@ def main():
             levels_query=levels_query,
             levels_plot=levels_plot,
             interp=interp,
+            x_points=xr,
+            y_points=yr,
         ))
         name = os.path.splitext(os.path.basename(rp))[0]
 
     if not refs:
         raise RuntimeError("No valid reference KDEs could be built.")
+
+    save_reference_kde_plots(refs, OUTPUT_DIR)
 
     # --- Prepare output table columns ---
     out_rows = []
@@ -642,6 +730,7 @@ def main():
                 "Segment":  meta.get("Segment", ""),
                 "Clone":    meta.get("Clone", ""),
                 "ID":       meta.get("ID", ""),
+                "Colour":   meta.get("Colour", ""),
                 "PointIndex": i,
                 "X": xv,
                 "Y": yv,
