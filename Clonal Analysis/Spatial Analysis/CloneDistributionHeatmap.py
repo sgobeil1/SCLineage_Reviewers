@@ -326,24 +326,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import sys
-sys.path.append(r"Z:\People\Sophie\9 Mouse SC lineage paper\20260126 Data Analysis and Plots\Code Versions\ClonalAnalysis") # File path of ClonalAnalysisPlots
-import ClonalAnalysisPlots as cap
+sys.path.append(r"Z:\People\Sophie\9 Mouse SC lineage paper\20260126 Data Analysis and Plots\Code Versions\ClonalAnalysis")
+import ClonalAnalysisPlots_20260126 as cap
 import datetime
 import seaborn as sns
-
+sys.path.append(r"Z:\People\Sophie\10 AB Spatial Distribution Map\20251118 Clone Spatial Analysis\Normalized clones - neurons only and 80% known\Output_20251119_091750")
+import clone_order_20251119 as co
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 
 
-########################################################################################################################################################################################################
-### User input
+# =========================
+# ---- USER SETTINGS ------
+# =========================
 # Find current date and time, which will be used in file naming
 now = datetime.datetime.now()
 curr_date = now.strftime("%Y%m%d_%H%M%S")
     
-INPUT_PATH  = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20260113 Clone Spatial Analysis\AB vs Clone distribution comparison\Output_Neurons only 80% complete_20260115_155549\query_cells_percentile_membership_20260115_155928.csv" # Path of query_cells_percentile_membership csv file (output of CompareDistributions)
-OUTPUT_DIR  = r"Z:\People\Sophie\10 AB Spatial Distribution Map\20260113 Clone Spatial Analysis\AB vs Clone distribution comparison\Output_Neurons only 80% complete_20260115_155549" # Desired output folder
-# Output file naming
+INPUT_PATH  = r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\20261021 Clone Spatial Analysis\AB vs Clone distribution comparison\Output_neurons only 80% complete20261021_163200\query_cells_percentile_membership_20261021_163759.csv"
+OUTPUT_DIR  = r"Z:\People\Sophie\9 Mouse SC lineage paper\20260707 Data Analysis and Plots\20261021 Clone Spatial Analysis" + '/Plot_'+ str(curr_date) # The input and output file paths quickly get too long. They may need to be shortened and then files copy-pasted manually to organize them
 HEATMAP_PNG = "query_cells_percentile_membership_heatmap.png"
 MATRIX_CSV  = "query_cells_percentile_membership_matrix.csv"
 MIXING_CSV  = "query_cells_percentile_membership_clone_mixing.csv"
@@ -376,20 +377,34 @@ AB_LABEL_SIMPLIFIER = re.compile(r'^(?:.*?_)?([^_]+?)(?:_concatenated)?$')
 KEEP_FULL_AB_LABELS = True  # set True to keep full column names
 
 # ABs
-AB_ORDER =  ['dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)','dI1 (Barhl1+)', 'dI2 (FoxD3+En1-)', 'dI3 (dorsal Isl+)', 'dI3 (Isl+Tlx3+Lbx1-)', 
-            'dI6 (Dmrt3+)', 'V0 (Evx1+)', 'V1 (En1+)', 'V1 (En1+FoxD3+)', 'V2 (Chx10+)', 'MN (Hb9+)', 'MN (ventral Isl+)', 'V3 (Nkx2.2+)'] # Top to bottom order of AN display on y axis of heatmap
+AB_ORDER =  ['dI1 (Barhl1+)', 
+             'dI2 (FoxD3+En1-)', 
+             'dI3 (dorsal Isl+)', 
+             'dI3 (Isl+Tlx3+Lbx1-)',
+             'dI4 (dorsal Sall3+)',
+             'dI5 (Lbx1+Tlx3+)', 
+             'dI5 (Lmx1b+)', 
+             'dI5 (Tlx3+)',
+            'dI6 (Dmrt3+)', 
+            'V0 (Evx1+)', 
+            'V1 (En1+)', 
+            'V1 (En1+FoxD3+)', 
+            'V2 (Chx10+)', 
+            'MN (Hb9+)', 
+            'MN (ventral Isl+)', 
+            'V3 (Nkx2.2+)'] # Top to bottom order of AN display on y axis of heatmap
 
 # ['dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)','dI1 (Barhl1+)', 'dI2 (FoxD3+En1-)', 'dI3 (dorsal Isl+)', 'dI3 (Isl+Tlx3+Lbx1-)', 'dI6 (Dmrt3+)', 'V0 (Evx1+)', 'V1 (En1+)', 'V1 (En1+FoxD3+)', 'V2 (Chx10+)', 'V3 (Nkx2.2+)', 'MN (Hb9+)', 'MN (ventral Isl+)']
 
 APPEND_UNLISTED_ABS = True   # if True, append ABs not in AB_ORDER (alphabetically). If False, show only AB_ORDER.
 LINEAGE_COMP = [['dI1 (Barhl1+)', 'dI2 (FoxD3+En1-)', 'dI3 (dorsal Isl+)', 'dI3 (Isl+Tlx3+Lbx1-)'], 
-                ['dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)'], 
+                ['dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)', 'dI4 (ventral Sall3+)'], 
                 ['dI6 (Dmrt3+)', 'V0 (Evx1+)', 'V1 (En1+)', 'V1 (En1+FoxD3+)'], 
                 ['V2 (Chx10+)','MN (Hb9+)', 'MN (ventral Isl+)'],
                 ['V3 (Nkx2.2+)']]
 DV_GROUPS = [['dI1 (Barhl1+)', 'dI2 (FoxD3+En1-)', 'dI3 (dorsal Isl+)', 'dI3 (Isl+Tlx3+Lbx1-)', 'dI6 (Dmrt3+)', 'V0 (Evx1+)', 'V1 (En1+)', 'V1 (En1+FoxD3+)',
               'V2 (Chx10+)','MN (Hb9+)', 'MN (ventral Isl+)', 'V3 (Nkx2.2+)'],
-            ['dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)']]
+            ['dI5 (Lbx1+Tlx3+)', 'dI5 (Lmx1b+)', 'dI5 (Tlx3+)', 'dI4 (ventral Sall3+)']]
 
 # Do you want to exclude clones with only one cell?
 EXCLUDE_SINGLE_CELL_CLONES = True 
@@ -710,7 +725,7 @@ def clone_to_animal(clone: str) -> str:
 
 
 def main():
-    ensure_output_dir(OUTPUT_DIR + '/Plotting_'+ str(curr_date))
+    ensure_output_dir(OUTPUT_DIR)
 
     print(f"Reading: {INPUT_PATH}")
     df = read_table_auto(INPUT_PATH)
@@ -733,7 +748,10 @@ def main():
     # AB columns are strictly columns 9 to end by position
     if df.shape[1] < 6:
         raise ValueError("Not enough columns: need at least 5 metadata columns plus AB columns.")
-    ab_cols = list(df.columns[9:])  # 0-based
+    ab_cols = [
+        c for c in df.columns[9:]
+        if c not in ["Colour", "X", "Y"]
+    ]
 
     # Parse AB columns
     df_num = df.copy()
@@ -875,7 +893,7 @@ def main():
                     color_idx += 1
         # -----------------------------------------------------------
 
-        masked_cells = _np.ma.masked_invalid(cell_matrix.to_numpy(dtype=float))
+        masked_cells = np.ma.masked_invalid(cell_matrix.to_numpy(dtype=float))
 
         # 0 -> semi-transparent white, 1 -> solid black
         bw_cmap = ListedColormap([
@@ -967,9 +985,19 @@ def main():
             df_vals_c = df_vals_c[row_order_c]
             mat_c = df_vals_c.to_numpy(dtype=float).T  # AB×Cell
 
-            clone_slug = sanitize_filename(clone_name)
-            out_png = os.path.join(OUTPUT_DIR, f"cell_AB_membership_COLOURED_{clone_slug}.png")
-            out_svg = os.path.join(OUTPUT_DIR, f"cell_AB_membership_COLOURED_{clone_slug}.svg")
+            clone_slug = sanitize_filename(
+                canonical_clone_name(clone_name)
+            )
+
+            out_png = os.path.join(
+                OUTPUT_DIR,
+                f"cell_AB_col_{clone_slug}.png"
+            )
+
+            out_svg = os.path.join(
+                OUTPUT_DIR,
+                f"cell_AB_col_{clone_slug}.svg"
+            )
 
             plot_cell_heatmap_coloured(
                 values=mat_c,
@@ -1060,9 +1088,19 @@ def main():
 
         fig_c.tight_layout()
 
-        clone_slug = sanitize_filename(clone_name)
-        out_png = os.path.join(OUTPUT_DIR, f"cell_AB_membership_{clone_slug}.png")
-        out_svg = os.path.join(OUTPUT_DIR, f"cell_AB_membership_{clone_slug}.svg")
+        clone_slug = sanitize_filename(
+            canonical_clone_name(clone_name)
+        )
+
+        out_png = os.path.join(
+            OUTPUT_DIR,
+            f"cell_AB_{clone_slug}.png"
+        )
+
+        out_svg = os.path.join(
+            OUTPUT_DIR,
+            f"cell_AB_{clone_slug}.svg"
+        )
 
         fig_c.savefig(out_png, bbox_inches="tight", dpi=300)
         fig_c.savefig(out_svg, bbox_inches="tight")
@@ -1255,23 +1293,23 @@ def main():
 
     # Define dorsal/ventral groups from DV_GROUPS:
     #   DV_GROUPS[0] = "other cardinal classes"
-    #   DV_GROUPS[1] = "dI5" class
+    #   DV_GROUPS[1] = "dI4/5" class
     other_ABs = set(DV_GROUPS[0])
-    dI5_ABs   = set(DV_GROUPS[1])
+    dI45_ABs  = set(DV_GROUPS[1])
 
     dv_mixing_flag = {}
     for clone in matrix.columns:
-        # Does this clone have any dI5 AB "present"?
-        has_dI5 = any(
+        # Does this clone have any dI4/5 AB "present"?
+        has_dI45 = any(
             (ab in presence.index) and bool(presence.loc[ab, clone])
-            for ab in dI5_ABs
+            for ab in dI45_ABs
         )
-        # Does this clone have any non-dI5 (other) AB "present"?
+        # Does this clone have any non-dI4/5 (other) AB "present"?
         has_other = any(
             (ab in presence.index) and bool(presence.loc[ab, clone])
             for ab in other_ABs
         )
-        dv_mixing_flag[clone] = "yes" if (has_dI5 and has_other) else "no"
+        dv_mixing_flag[clone] = "yes" if (has_dI45 and has_other) else "no"
 
     # Add D/V mixing column to the per-clone heatmap table
     clone_heatmap.insert(
@@ -1630,11 +1668,11 @@ def main():
     _plt.close(_fig)
 
     ################################################################################################
-    ### dI5 vs other clone-category plots (ALL-TM one bar + per-TM bars) + saved tables
+    ### dI4/5 vs other clone-category plots (ALL-TM one bar + per-TM bars) + saved tables
     ################################################################################################
 
     tm_order  = ["E9.5", "E10.5", "E11.5"]
-    cat_order = ["dI5 + other", "dI5-only", "other-only"]
+    cat_order = ["dI4/5 + other", "dI4/5-only", "other"]
 
     # ---------------------------
     # 1) Clone -> TM mapping (from THIS script's input table)
@@ -1658,19 +1696,19 @@ def main():
     # 2) Determine clone categories using *CELL-LEVEL EXCLUSIVE* membership
     # ---------------------------
 
-    # Identify di5 vs non-di5 AB columns from the per-cell table
-    dI5_cols = [c for c in ab_cols if str(c).startswith("dI5")]
-    other_cols = [c for c in ab_cols if c not in dI5_cols]
+    # Identify dI4/5 vs non-dI4/5 AB columns from the per-cell table
+    dI45_cols = [c for c in ab_cols if str(c).startswith(("dI4", "dI5"))]
+    other_cols = [c for c in ab_cols if c not in dI45_cols]
 
-    if len(dI5_cols) == 0:
-        raise ValueError("No dI5 AB columns found (expected columns starting with 'dI5').")
+    if len(dI45_cols) == 0:
+        raise ValueError("No dI4/5 AB columns found (expected columns starting with 'dI4' or 'dI5').")
 
     df_cat = df_num[[clone_col, "TM"] + (["PointIndex"] if "PointIndex" in df_num.columns else []) + ab_cols].copy()
     df_cat[clone_col] = df_cat[clone_col].astype(str).str.strip()
     df_cat["TM"] = df_cat["TM"].astype(str).str.strip()
 
     # Cell-level membership flags (≤ threshold anywhere within group)
-    df_cat["Has_dI5"] = (df_cat[dI5_cols].min(axis=1, skipna=True) <= MIX_THRESHOLD)
+    df_cat["Has_dI45"] = (df_cat[dI45_cols].min(axis=1, skipna=True) <= MIX_THRESHOLD)
     df_cat["Has_other"] = (df_cat[other_cols].min(axis=1, skipna=True) <= MIX_THRESHOLD)
 
     # Define a stable per-cell key (prefer PointIndex)
@@ -1686,16 +1724,16 @@ def main():
         .groupby([clone_col, cell_key], dropna=False)
         .agg(
             TM=("TM", "first"),
-            Has_dI5=("Has_dI5", "max"),
+            Has_dI45=("Has_dI45", "max"),
             Has_other=("Has_other", "max"),
         )
         .reset_index()
     )
 
     # Exclusive cell types
-    cell_level["dI5_only_cell"] = cell_level["Has_dI5"] & (~cell_level["Has_other"])
-    cell_level["other_only_cell"] = cell_level["Has_other"] & (~cell_level["Has_dI5"])
-    cell_level["mixed_cell"] = cell_level["Has_dI5"] & (cell_level["Has_other"])
+    cell_level["dI45_only_cell"] = cell_level["Has_dI45"] & (~cell_level["Has_other"])
+    cell_level["other_only_cell"] = cell_level["Has_other"] & (~cell_level["Has_dI45"])
+    cell_level["mixed_cell"] = cell_level["Has_dI45"] & (cell_level["Has_other"])
 
     # Per-clone counts of each cell type
     clone_summary = (
@@ -1703,10 +1741,10 @@ def main():
         .groupby(clone_col, dropna=False)
         .agg(
             TM=("TM", "first"),
-            n_dI5_only=("dI5_only_cell", "sum"),
+            n_dI45_only=("dI45_only_cell", "sum"),
             n_other_only=("other_only_cell", "sum"),
             n_mixed=("mixed_cell", "sum"),
-            n_any=("Has_dI5", "sum"),  # not used for logic; just a sanity count
+            n_any=("Has_dI45", "sum"),  # not used for logic; just a sanity count
         )
         .reset_index()
         .rename(columns={clone_col: "Clone"})
@@ -1715,19 +1753,19 @@ def main():
     # Clone category logic (STRICT "only" bins)
     category = []
     for _, r in clone_summary.iterrows():
-        n_di5 = int(r["n_dI5_only"])
+        n_di45 = int(r["n_dI45_only"])
         n_oth = int(r["n_other_only"])
         n_mix = int(r["n_mixed"])
 
-        if (n_di5 > 0) and (n_oth == 0) and (n_mix == 0):
-            cat = "dI5-only"
-        elif (n_oth > 0) and (n_di5 == 0) and (n_mix == 0):
-            cat = "other-only"
-        elif (n_di5 > 0) and (n_oth > 0):
+        if (n_di45 > 0) and (n_oth == 0) and (n_mix == 0):
+            cat = "dI4/5-only"
+        elif (n_oth > 0) and (n_di45 == 0) and (n_mix == 0):
+            cat = "other"
+        elif (n_di45 > 0) and (n_oth > 0):
             # has both exclusive cell types
-            cat = "dI5 + other"
+            cat = "dI4/5 + other"
         else:
-            # e.g. only mixed cells, or dI5_only + mixed, or other_only + mixed, or nothing
+            # e.g. only mixed cells, or dI4/5_only + mixed, or other_only + mixed, or nothing
             cat = "neither"
         category.append(cat)
 
@@ -1743,15 +1781,14 @@ def main():
     per_clone_cat_df["Clone"] = per_clone_cat_df["Clone"].astype(str).str.strip()
 
     # Save a diagnostic table so you can inspect “neither” / mixed cases
-    dI5_base = os.path.join(OUTPUT_DIR, "proportion_dI5_categories")
+    dI5_base = os.path.join(OUTPUT_DIR, "proportion_dI45_categories")
     per_clone_cat_df.to_csv(dI5_base + "_per_clone_category_with_TM_diagnostic.csv", index=False)
 
     # merge TM (clone_col may be "QueryFile" or "Clone")
     clone_tm_renamed = clone_tm.rename(columns={clone_col: "Clone"})
     per_clone_cat_df = per_clone_cat_df.merge(clone_tm_renamed, on="Clone", how="left")
 
-
-    dI5_base = os.path.join(OUTPUT_DIR, "proportion_dI5_categories")
+    dI5_base = os.path.join(OUTPUT_DIR, "proportion_dI45_categories")
 
     # Save per-clone category table (with TM)
     per_clone_cat_df.to_csv(dI5_base + "_per_clone_category_with_TM.csv", index=False)
@@ -1880,21 +1917,673 @@ def main():
     counts_tm.to_csv(dI5_tm_base + "_counts.csv", index=False)
     plot_df_tm.to_csv(dI5_tm_base + "_proportions.csv", index=False)
 
+
     ################################################################################################
-    ### Purity plot for mixed clones (dI5 + other): per-clone fraction of cells that are dI5 vs other
+    ### Separate dI4/5 category proportion plots + KDE heatmaps for green and red cells
+    ################################################################################################
+
+    if "Colour" not in df_num.columns:
+        raise ValueError(
+            "Expected a 'Colour' column in the input table "
+            "for green/red-specific analyses."
+        )
+
+    # Clean once
+    colour_clean = (
+        df_num["Colour"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    # These are the same groups used in the existing dI4/5-category analysis
+    dI45_cols_colour = [
+        c for c in ab_cols
+        if str(c).startswith(("dI4", "dI5"))
+    ]
+
+    other_cols_colour = [
+        c for c in ab_cols
+        if c not in dI45_cols_colour
+    ]
+
+    if len(dI45_cols_colour) == 0:
+        raise ValueError(
+            "No dI4/5 AB columns found "
+            "(expected columns starting with 'dI4' or 'dI5')."
+        )
+
+    colour_name_lookup = {
+        "g": "green",
+        "r": "red",
+    }
+
+    for colour in ["g", "r"]:
+
+        colour_name = colour_name_lookup[colour]
+
+        print(
+            f"\nRunning colour-specific analysis: "
+            f"{colour_name} cells only"
+        )
+
+        # =====================================================================
+        # SUBSET TO THIS CELL COLOUR
+        # =====================================================================
+
+        df_colour = df_num.loc[
+            colour_clean == colour
+        ].copy()
+
+        if df_colour.empty:
+            print(
+                f"No {colour_name} cells found; "
+                f"skipping {colour} analysis."
+            )
+            continue
+
+        print(
+            f"{colour_name.capitalize()} cells: "
+            f"{len(df_colour)} cells, "
+            f"{df_colour[clone_col].nunique()} clones"
+        )
+
+        # =====================================================================
+        # 1. COLOUR-SPECIFIC KDE HEATMAP
+        # =====================================================================
+
+        # Minimum percentile reached by cells of THIS colour only
+        grouped_min_colour = (
+            df_colour
+            .groupby(
+                clone_col,
+                dropna=False,
+            )[ab_cols]
+            .min(numeric_only=True)
+        )
+
+        colour_matrix = grouped_min_colour.T
+
+        # Apply the same AB-label treatment as the main heatmap
+        colour_matrix.index = [
+            simplify_ab_label(c)
+            for c in colour_matrix.index
+        ]
+
+        if colour_matrix.index.has_duplicates:
+            colour_matrix = (
+                colour_matrix
+                .groupby(
+                    colour_matrix.index,
+                    sort=False,
+                )
+                .min()
+            )
+
+        # Use exactly the same AB order as the overall heatmap
+        colour_ab_order = [
+            ab
+            for ab in matrix.index
+            if ab in colour_matrix.index
+        ]
+
+        colour_matrix = colour_matrix.loc[
+            colour_ab_order
+        ]
+
+        # Use the same clone order as the overall heatmap,
+        # omitting clones that have no cells of this colour.
+        colour_clone_order = [
+            clone
+            for clone in matrix.columns
+            if clone in colour_matrix.columns
+        ]
+
+        colour_matrix = colour_matrix[
+            colour_clone_order
+        ]
+
+        # Save matrix
+        colour_matrix_csv = os.path.join(
+            OUTPUT_DIR,
+            f"query_cells_percentile_membership_matrix_{colour}_cells.csv",
+        )
+
+        colour_matrix.to_csv(
+            colour_matrix_csv
+        )
+
+        # Clone size = number of cells OF THIS COLOUR
+        if "PointIndex" in df_colour.columns:
+            colour_clone_counts = (
+                df_colour
+                .groupby(clone_col)["PointIndex"]
+                .nunique(dropna=True)
+            )
+        else:
+            colour_clone_counts = (
+                df_colour
+                .groupby(clone_col)
+                .size()
+            )
+
+        colour_clone_counts = (
+            colour_clone_counts
+            .reindex(colour_matrix.columns)
+            .fillna(0)
+            .astype(int)
+        )
+
+        # Plot
+        colour_data = colour_matrix.to_numpy(
+            dtype=float
+        )
+
+        colour_masked = np.ma.masked_invalid(
+            colour_data
+        )
+
+        colour_cmap = plt.cm.viridis_r.copy()
+        colour_cmap.set_bad(
+            color="#d9d9d9"
+        )
+
+        dpi = 100
+
+        colour_fig_w = max(
+            FIG_SIZE_PX[0] / dpi,
+            7,
+        )
+
+        colour_fig_h = max(
+            FIG_SIZE_PX[1] / dpi,
+            4,
+        )
+
+        fig_colour, ax_colour = plt.subplots(
+            figsize=(
+                colour_fig_w,
+                colour_fig_h,
+            ),
+            dpi=dpi,
+        )
+
+        im_colour = ax_colour.imshow(
+            colour_masked,
+            aspect="auto",
+            interpolation="nearest",
+            cmap=colour_cmap,
+            vmin=0,
+            vmax=100,
+        )
+
+        ax_colour.set_xticks(
+            np.arange(
+                colour_matrix.shape[1]
+            )
+        )
+
+        ax_colour.set_yticks(
+            np.arange(
+                colour_matrix.shape[0]
+            )
+        )
+
+        ax_colour.set_yticklabels(
+            colour_matrix.index,
+            fontsize=9,
+        )
+
+        # Clone label + number of cells of this colour
+        colour_xticklabels = [
+            f"{clone} "
+            f"(n={colour_clone_counts.get(clone, 0)})"
+            for clone in colour_matrix.columns
+        ]
+
+        ax_colour.set_xticklabels(
+            colour_xticklabels,
+            rotation=90,
+            fontsize=9,
+        )
+
+        ax_colour.set_xlabel(
+            f"Clone ({colour_name} cells only)"
+        )
+
+        ax_colour.set_ylabel(
+            "AB distribution"
+        )
+
+        ax_colour.set_title(
+            f"Minimum KDE Percentile per Clone × AB\n"
+            f"{colour_name.capitalize()} cells only"
+        )
+
+        # Grid
+        ax_colour.set_xticks(
+            np.arange(
+                -0.5,
+                colour_matrix.shape[1],
+                1,
+            ),
+            minor=True,
+        )
+
+        ax_colour.set_yticks(
+            np.arange(
+                -0.5,
+                colour_matrix.shape[0],
+                1,
+            ),
+            minor=True,
+        )
+
+        ax_colour.grid(
+            which="minor",
+            color="white",
+            linestyle="-",
+            linewidth=0.5,
+        )
+
+        ax_colour.tick_params(
+            which="minor",
+            bottom=False,
+            left=False,
+        )
+
+        cbar_colour = fig_colour.colorbar(
+            im_colour,
+            ax=ax_colour,
+            fraction=0.046,
+            pad=0.04,
+        )
+
+        cbar_colour.set_label(
+            "Minimum KDE percentile (0–100)"
+        )
+
+        fig_colour.tight_layout()
+
+        heatmap_colour_base = os.path.join(
+            OUTPUT_DIR,
+            f"query_cells_percentile_membership_heatmap_{colour}_cells",
+        )
+
+        fig_colour.savefig(
+            heatmap_colour_base + ".png",
+            dpi=300,
+            bbox_inches="tight",
+        )
+
+        fig_colour.savefig(
+            heatmap_colour_base + ".svg",
+            bbox_inches="tight",
+        )
+
+        plt.close(fig_colour)
+
+        # =====================================================================
+        # 2. COLOUR-SPECIFIC dI4/5 CATEGORY ANALYSIS
+        # =====================================================================
+
+        # Work ONLY on cells of this colour
+        keep_cols = (
+            [clone_col, "TM"]
+            + (
+                ["PointIndex"]
+                if "PointIndex" in df_colour.columns
+                else []
+            )
+            + ab_cols
+        )
+
+        df_cat_colour = df_colour[
+            keep_cols
+        ].copy()
+
+        df_cat_colour[clone_col] = (
+            df_cat_colour[clone_col]
+            .astype(str)
+            .str.strip()
+        )
+
+        df_cat_colour["TM"] = (
+            df_cat_colour["TM"]
+            .astype(str)
+            .str.strip()
+        )
+
+        # ---------------------------------------------------------------
+        # SAME cell-level membership rule as existing analysis
+        # ---------------------------------------------------------------
+
+        df_cat_colour["Has_dI45"] = (
+            df_cat_colour[
+                dI45_cols_colour
+            ]
+            .min(
+                axis=1,
+                skipna=True,
+            )
+            <= MIX_THRESHOLD
+        )
+
+        df_cat_colour["Has_other"] = (
+            df_cat_colour[
+                other_cols_colour
+            ]
+            .min(
+                axis=1,
+                skipna=True,
+            )
+            <= MIX_THRESHOLD
+        )
+
+        # Stable cell key
+        if "PointIndex" in df_cat_colour.columns:
+            colour_cell_key = "PointIndex"
+
+        else:
+            df_cat_colour = (
+                df_cat_colour
+                .reset_index()
+                .rename(
+                    columns={
+                        "index": "RowIndex"
+                    }
+                )
+            )
+
+            colour_cell_key = "RowIndex"
+
+        # One row per cell within clone
+        colour_cell_level = (
+            df_cat_colour
+            .groupby(
+                [
+                    clone_col,
+                    colour_cell_key,
+                ],
+                dropna=False,
+            )
+            .agg(
+                TM=("TM", "first"),
+                Has_dI45=("Has_dI45", "max"),
+                Has_other=("Has_other", "max"),
+            )
+            .reset_index()
+        )
+
+        # SAME exclusive-cell definitions as overall analysis
+        colour_cell_level[
+            "dI45_only_cell"
+        ] = (
+            colour_cell_level["Has_dI45"]
+            &
+            ~colour_cell_level["Has_other"]
+        )
+
+        colour_cell_level[
+            "other_only_cell"
+        ] = (
+            colour_cell_level["Has_other"]
+            &
+            ~colour_cell_level["Has_dI45"]
+        )
+
+        colour_cell_level[
+            "mixed_cell"
+        ] = (
+            colour_cell_level["Has_dI45"]
+            &
+            colour_cell_level["Has_other"]
+        )
+
+        # ---------------------------------------------------------------
+        # Collapse to clones
+        # ---------------------------------------------------------------
+
+        colour_clone_summary = (
+            colour_cell_level
+            .groupby(
+                clone_col,
+                dropna=False,
+            )
+            .agg(
+                TM=("TM", "first"),
+                n_dI45_only=(
+                    "dI45_only_cell",
+                    "sum",
+                ),
+                n_other_only=(
+                    "other_only_cell",
+                    "sum",
+                ),
+                n_mixed=(
+                    "mixed_cell",
+                    "sum",
+                ),
+            )
+            .reset_index()
+            .rename(
+                columns={
+                    clone_col: "Clone"
+                }
+            )
+        )
+
+        # SAME strict clone-category logic as overall analysis
+        colour_categories = []
+
+        for _, row in colour_clone_summary.iterrows():
+
+            n_di45 = int(
+                row["n_dI45_only"]
+            )
+
+            n_other = int(
+                row["n_other_only"]
+            )
+
+            n_mixed = int(
+                row["n_mixed"]
+            )
+
+            if (
+                n_di45 > 0
+                and n_other == 0
+                and n_mixed == 0
+            ):
+                category_colour = "dI4/5-only"
+
+            elif (
+                n_other > 0
+                and n_di45 == 0
+                and n_mixed == 0
+            ):
+                category_colour = "other"
+
+            elif (
+                n_di45 > 0
+                and n_other > 0
+            ):
+                category_colour = "dI4/5 + other"
+
+            else:
+                category_colour = "neither"
+
+            colour_categories.append(
+                category_colour
+            )
+
+        colour_clone_summary[
+            "Category"
+        ] = colour_categories
+
+        # Keep valid TMs
+        colour_clone_summary = (
+            colour_clone_summary[
+                colour_clone_summary[
+                    "TM"
+                ].isin(tm_order)
+            ]
+            .copy()
+        )
+
+        colour_clone_summary["TM"] = (
+            pd.Categorical(
+                colour_clone_summary["TM"],
+                categories=tm_order,
+                ordered=True,
+            )
+        )
+
+        # Add the name expected by your existing
+        # make_stacked_tables() helper
+        colour_clone_summary["TM_x"] = (
+            colour_clone_summary["TM"]
+        )
+
+        # Save diagnostic per-clone table
+        colour_dI5_base = os.path.join(
+            OUTPUT_DIR,
+            f"proportion_dI45_categories_{colour}_cells",
+        )
+
+        colour_clone_summary.to_csv(
+            colour_dI5_base
+            + "_per_clone_category_with_TM.csv",
+            index=False,
+        )
+
+        # =================================================================
+        # 2A. ALL TM pooled
+        # =================================================================
+
+        colour_all = (
+            colour_clone_summary.copy()
+        )
+
+        colour_all["All"] = "All clones"
+
+        (
+            colour_plot_all,
+            colour_counts_all,
+        ) = make_stacked_tables(
+            colour_all,
+            x_col="All",
+            drop_neither=True,
+        )
+
+        colour_all_base = (
+            colour_dI5_base
+            + "_ALLTM"
+        )
+
+        cap.snsStackedBarPlot(
+            data=colour_plot_all,
+            x="X",
+            hue="Status",
+            weights="Weight",
+            x_axis_title="",
+            y_axis_title=(
+                f"Proportion of clones "
+                f"({colour_name} cells only; "
+                f"≤ {MIX_THRESHOLD}%)"
+            ),
+            x_axis_ticks=["All clones"],
+            output_path=colour_all_base,
+            palette=(
+                "lightgrey",
+                "darkgrey",
+                "dimgray",
+            ),
+            fig_size=(0.6, 5),
+            hue_order=cat_order,
+        )
+
+        colour_counts_all.to_csv(
+            colour_all_base
+            + "_counts.csv",
+            index=False,
+        )
+
+        colour_plot_all.to_csv(
+            colour_all_base
+            + "_proportions.csv",
+            index=False,
+        )
+
+        # =================================================================
+        # 2B. Separate bars by TM
+        # =================================================================
+
+        (
+            colour_plot_tm,
+            colour_counts_tm,
+        ) = make_stacked_tables(
+            colour_clone_summary,
+            x_col="TM_x",
+            drop_neither=True,
+        )
+
+        colour_tm_base = (
+            colour_dI5_base
+            + "_by_TM"
+        )
+
+        cap.snsStackedBarPlot(
+            data=colour_plot_tm,
+            x="X",
+            hue="Status",
+            weights="Weight",
+            x_axis_title="TM",
+            y_axis_title=(
+                f"Proportion of clones "
+                f"({colour_name} cells only; "
+                f"≤ {MIX_THRESHOLD}%)"
+            ),
+            x_axis_ticks=tm_order,
+            output_path=colour_tm_base,
+            palette=(
+                "lightgrey",
+                "darkgrey",
+                "dimgray",
+            ),
+            fig_size=(4.5, 5),
+            hue_order=cat_order,
+        )
+
+        colour_counts_tm.to_csv(
+            colour_tm_base
+            + "_counts.csv",
+            index=False,
+        )
+
+        colour_plot_tm.to_csv(
+            colour_tm_base
+            + "_proportions.csv",
+            index=False,
+        )
+
+
+    ################################################################################################
+    ### Purity plot for mixed clones (dI4/5 + other): per-clone fraction of cells that are dI4/5 vs other
     ################################################################################################
 
     # --- Identify mixed clones from your existing per-clone category table ---
     mixed_clones = (
-        per_clone_cat_df.loc[per_clone_cat_df["Category"] == "dI5 + other", "Clone"]
+        per_clone_cat_df.loc[per_clone_cat_df["Category"] == "dI4/5 + other", "Clone"]
         .astype(str)
         .tolist()
     )
 
-    purity_out_base = os.path.join(OUTPUT_DIR, f"purity_mixed_dI5_other_per_clone_thr{MIX_THRESHOLD}")
+    purity_out_base = os.path.join(OUTPUT_DIR, f"purity_mixed_dI45_other_per_clone_thr{MIX_THRESHOLD}")
 
     if len(mixed_clones) == 0:
-        print("[purity] No mixed (dI5 + other) clones found; skipping purity plot.")
+        print("[purity] No mixed (dI4/5 + other) clones found; skipping purity plot.")
     else:
         # --- Build a per-cell component label based on predicted identity ---
         df_purity = df_num[df_num[clone_col].astype(str).isin(mixed_clones)].copy()
@@ -1907,7 +2596,7 @@ def main():
 
         # Predicted identity is an AB label; first 3 chars = cardinal class
         df_purity["PredCardinal"] = df_purity[PREDICTED_ID_COLNAME].astype(str).str[:3]
-        df_purity["Component"] = np.where(df_purity["PredCardinal"] == "dI5", "dI5", "other")
+        df_purity["Component"] = np.where(df_purity["PredCardinal"].isin(["dI4", "dI5"]), "dI4/5", "other")
 
         # Count CELLS per clone × component (use unique PointIndex if available)
         if "PointIndex" in df_purity.columns:
@@ -1934,31 +2623,31 @@ def main():
                   .fillna(0)
                   .reset_index()
         )
-        if "dI5" not in wide.columns:
-            wide["dI5"] = 0
+        if "dI4/5" not in wide.columns:
+            wide["dI4/5"] = 0
         if "other" not in wide.columns:
             wide["other"] = 0
 
-        wide["TotalCells"] = wide["dI5"] + wide["other"]
+        wide["TotalCells"] = wide["dI4/5"] + wide["other"]
 
         # Drop any weird clones with 0 counted cells
         wide = wide[wide["TotalCells"] > 0].copy()
 
         # Fractions (each clone sums to 1.0)
-        wide["Frac_dI5"]   = wide["dI5"] / wide["TotalCells"]
+        wide["Frac_dI45"]  = wide["dI4/5"] / wide["TotalCells"]
         wide["Frac_other"] = wide["other"] / wide["TotalCells"]
 
         # Sort for readability
-        wide = wide.sort_values(["Frac_dI5", "Clone"], ascending=[False, True]).reset_index(drop=True)
+        wide = wide.sort_values(["Frac_dI45", "Clone"], ascending=[False, True]).reset_index(drop=True)
 
         # ---------------------------
         # DIRECT stacked bar plot
         # ---------------------------
         x = np.arange(len(wide))
-        frac_dI5 = wide["Frac_dI5"].to_numpy(dtype=float)
+        frac_dI45 = wide["Frac_dI45"].to_numpy(dtype=float)
         frac_other = wide["Frac_other"].to_numpy(dtype=float)
 
-        dI5_n = wide["dI5"].to_numpy(dtype=int)
+        dI45_n = wide["dI4/5"].to_numpy(dtype=int)
         other_n = wide["other"].to_numpy(dtype=int)
 
         fig_w = max(10.0, 0.35 * len(wide))  # long clone IDs need more width
@@ -1966,13 +2655,13 @@ def main():
 
         fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
 
-        ax.bar(x, frac_dI5, label="dI5")                         # bottom = 0
-        ax.bar(x, frac_other, bottom=frac_dI5, label="other")    # stacked on top
+        ax.bar(x, frac_dI45, label="dI4/5")                         # bottom = 0
+        ax.bar(x, frac_other, bottom=frac_dI45, label="other")    # stacked on top
 
         ax.set_ylim(0, 1.0)
         ax.set_ylabel("Fraction of cells (predicted identity)", fontweight="bold")
-        ax.set_xlabel("Mixed clones (sorted by dI5 fraction)", fontweight="bold")
-        ax.set_title("Purity of mixed clones: dI5 vs other")
+        ax.set_xlabel("Mixed clones (sorted by dI4/5 fraction)", fontweight="bold")
+        ax.set_title("Purity of mixed clones: dI4/5 vs other")
 
         # Use clone IDs as tick labels
         ax.set_xticks(x)
@@ -1988,23 +2677,23 @@ def main():
 
         for i in range(len(wide)):
             # dI5 segment annotation
-            if frac_dI5[i] >= min_height_for_text and dI5_n[i] > 0:
+            if frac_dI45[i] >= min_height_for_text and dI45_n[i] > 0:
                 ax.text(
                     x[i],
-                    frac_dI5[i] / 2.0,
-                    str(dI5_n[i]),
+                    frac_dI45[i] / 2.0,
+                    str(dI45_n[i]),
                     ha="center",
                     va="center",
                     fontsize=8,
                     color="white",
                     fontweight="bold"
                 )
-            elif dI5_n[i] > 0:
+            elif dI45_n[i] > 0:
                 # if too small, place just above the segment
                 ax.text(
                     x[i],
-                    frac_dI5[i] + 0.01,
-                    str(dI5_n[i]),
+                    frac_dI45[i] + 0.01,
+                    str(dI45_n[i]),
                     ha="center",
                     va="bottom",
                     fontsize=7,
@@ -2015,7 +2704,7 @@ def main():
             if frac_other[i] >= min_height_for_text and other_n[i] > 0:
                 ax.text(
                     x[i],
-                    frac_dI5[i] + frac_other[i] / 2.0,
+                    frac_dI45[i] + frac_other[i] / 2.0,
                     str(other_n[i]),
                     ha="center",
                     va="center",
@@ -2027,7 +2716,7 @@ def main():
                 # if too small, place near the very top
                 ax.text(
                     x[i],
-                    min(0.99, frac_dI5[i] + frac_other[i] + 0.01),
+                    min(0.99, frac_dI45[i] + frac_other[i] + 0.01),
                     str(other_n[i]),
                     ha="center",
                     va="bottom",
@@ -2047,9 +2736,9 @@ def main():
 
         plot_df_purity = pd.DataFrame({
             "Clone": np.repeat(wide["Clone"].values, 2),
-            "Status": ["dI5", "other"] * len(wide),
-            "CellCount": np.concatenate([wide["dI5"].values, wide["other"].values]),
-            "Fraction": np.concatenate([wide["Frac_dI5"].values, wide["Frac_other"].values]),
+            "Status": ["dI4/5", "other"] * len(wide),
+            "CellCount": np.concatenate([wide["dI4/5"].values, wide["other"].values]),
+            "Fraction": np.concatenate([wide["Frac_dI45"].values, wide["Frac_other"].values]),
         })
         plot_df_purity.to_csv(purity_out_base + "_plot_long.csv", index=False)
     
@@ -2059,7 +2748,7 @@ def main():
     matrix=matrix,
     mix_threshold=MIX_THRESHOLD,
     lineage_groups=LINEAGE_COMP,                 # your list of AB-label lists
-    labels=["dI1/dI2/dI3", "dI5", "dI6/V0/V1", "V2/MN", "MN/V3"],  # or None for Group 1..N
+    labels=["dI1/dI2/dI3", "dI4/5", "dI6/V0/V1", "V2/MN", "V3"],  # or None for Group 1..N
     out_dir=OUTPUT_DIR,
     base_name="lineage_subdivision_hist",
     mixed_only=True,              # only clones mixed across cardinal classes
@@ -2071,7 +2760,7 @@ def main():
     matrix=matrix,
     mix_threshold=MIX_THRESHOLD,
     lineage_groups=DV_GROUPS,                 # your list of AB-label lists
-    labels=["dI1/dI2/dI3/dI6/V0/V1/V2/MN/V3", "dI5"],  # or None for Group 1..N
+    labels=["dI1/dI2/dI3/dI6/V0/V1/V2/MN/V3", "dI4/5"],  # or None for Group 1..N
     out_dir=OUTPUT_DIR,
     base_name="dv_groups_hist",
     mixed_only=True,              # only clones mixed across cardinal classes
