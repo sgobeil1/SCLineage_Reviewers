@@ -3,7 +3,14 @@
 This file contains information about the clonal analysis pipeline used in **Gobeil et al. (2026)** and how to run the demo.
 
 ## Overview
-This folder (`Clonal Analysis`) contains scripts for parsing MADM cells into clones. Wholemount microscopy images are opened in Imaris and the Spots function is usedto obtain coordinates of green, red, and yellow cells.  G, R, and Y cells. The 3D cell coordintes are exported and manual annotations of cell qualitative information are made (`RGY Spots` csv files). Each animal also gets a reference file (`Ref` csv file) with central canal and rotation information that is used to normalize the cell coordinates. Briefly, the `ClonalAnalysis` script normalizes cell coordinates to the central canal, rotates them so the DV axis is oriented vertically, and normalizes Z positions to a spinal cord of standard length. It then parses red/green cell clones based on inter-cell and inter-clone thresholds, excludes clones based on proximity to other clones, proximity to the end of a segment (each SC is cut into 6 segments for clearing and imaging), proximity to damage, and single-cell clones. The output is used for clone quantifications using `ClonalAnalysisSimplePlotting` and spatial analysis (see `Spatial Analysis` folder).
+This folder (`Clonal Analysis`) contains scripts for parsing MADM cells into clones, analyzing, and plotting the data. 
+
+### E18.5 analysis
+Wholemount microscopy images are opened in Imaris and the Spots function is used to obtain coordinates of green, red, and yellow cells.  G, R, and Y cells. The 3D cell coordinates are exported and manual annotations of cell qualitative information are made (`RGY Spots` csv files). Each animal also gets a reference file (`Ref` csv file) with central canal and rotation information that is used to normalize the cell coordinates. Briefly, the `ClonalAnalysis` script normalizes cell coordinates to the central canal, rotates them so the DV axis is oriented vertically, and normalizes Z positions to a spinal cord of standard length. It then parses red/green cell clones based on inter-cell and inter-clone thresholds, excludes clones based on proximity to other clones, proximity to the end of a segment (each SC is cut into 6 segments for clearing and imaging), proximity to damage, and single-cell clones. The output is used for clone quantifications using `ClonalAnalysisSimplePlotting` and spatial analysis (see `Spatial Analysis` folder).
+
+### E13.5 analysis
+Confocal microscopy images are opened in Imaris and the Spots function is used to obtain coordinates of green and red cells. The 2D cell coordinates are exported, manual annotations of cell qualitative information are made, and antibody positive cells are manually recorded through rounds of iterative immunolabeling (`RGY Spots` csv files). The cells are normalized to a spinal cord of standard shape and size (`E13ReferenceCord`) using ventricle, lateral, dorsal, and ventral reference points then plotted with `E13SpatialAnalysis`. The rules in `E13CellIdentity` are the basis for assigning cell-type identities to cells then `E13SimplePlotting` 
+is used to analyze and plot the data.
 
 ---
 
